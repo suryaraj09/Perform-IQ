@@ -1,0 +1,262 @@
+# PerformIQ
+### A Gamified Retail Workforce Productivity & Analytics System
+
+---
+
+## Table of Contents
+- [Overview](#overview)
+- [Problem Statement](#problem-statement)
+- [Key Features](#key-features)
+- [System Architecture](#system-architecture)
+- [Tech Stack](#tech-stack)
+- [Database Schema](#database-schema)
+- [Performance Metrics](#performance-metrics)
+- [Gamification System](#gamification-system)
+- [Attendance & Geofencing](#attendance--geofencing)
+- [Project Structure](#project-structure)
+- [Getting Started](#getting-started)
+- [Team](#team)
+
+---
+
+## Overview
+
+PerformIQ is a full-stack web application designed to solve a critical gap in retail workforce management — the absence of a structured, data-driven system to measure and motivate employee productivity.
+
+It combines a **normalized analytics engine**, a **geofencing-based attendance system**, and a **gamification layer** to give retail managers actionable insights while keeping employees motivated through XP, levels, badges and leaderboards.
+
+---
+
+## Problem Statement
+
+Current retail store operations suffer from:
+- Sales performance shared informally via WhatsApp
+- No standardized or normalized productivity scoring
+- No structured database for employee performance data
+- No real-time analytics or visibility for managers
+- Performance evaluation that is subjective rather than data-driven
+- Hidden patterns like consistency, growth trends and volatility that go undetected
+
+**Core Problem:** Lack of a quantitative, normalized and structured system to evaluate retail staff productivity.
+
+---
+
+## Key Features
+
+### For Employees
+- **Gamified Dashboard** — XP points, levels, badges and streaks
+- **Personal Performance View** — weekly productivity score, trend charts, metric breakdown
+- **Leaderboard** — ranked view against colleagues
+- **Geofenced Attendance** — one-tap punch in/out verified by location
+
+### For Managers
+- **Analytics Dashboard** — department-level insights, revenue comparisons, target achievement
+- **Live Floor Monitoring** — real-time employee presence status via SSE
+- **Employee Clustering** — K-Means based grouping (e.g. High Volume vs High Basket)
+- **Performance Alerts** — early identification of underperformers and high-growth employees
+- **Correlation Heatmaps** — relationships between metrics across the team
+
+---
+
+## System Architecture
+
+```
+React Frontend (PWA)
+        ↕  REST API
+Node.js + Express Backend
+        ↕  SQL queries
+SQLite Database (local)
+        ↑  reads & writes
+Python Analytics Engine
+        
+Firebase Auth (identity verification only)
+        
+Server-Sent Events (SSE) — live manager alerts
+```
+
+### Data Flow
+1. Daily sales data is entered or imported into the database
+2. Python analytics script runs weekly, computing all metrics and writing scores back to SQLite
+3. Node.js backend exposes REST endpoints, verifies Firebase tokens, queries SQLite
+4. React frontend renders dashboards, charts and gamification UI
+5. Geofencing location checks run silently via PWA service worker every 30 minutes during a shift
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | React, Tailwind CSS, Recharts |
+| Backend | Node.js, Express.js |
+| Database | SQLite (via better-sqlite3) |
+| Analytics | Python, pandas, numpy, scipy, sklearn |
+| Auth | Firebase Authentication |
+| Real-time | Server-Sent Events (SSE) |
+| Attendance | Browser Geolocation API + PWA Service Worker |
+
+---
+
+## Database Schema
+
+Six core tables:
+
+| Table | Purpose |
+|---|---|
+| `stores` | Store location and geofence radius |
+| `departments` | Department benchmarks for normalization |
+| `employees` | Employee profiles linked to Firebase UID |
+| `daily_performance` | Daily sales records per employee |
+| `attendance` | Punch in/out logs with coordinates and status |
+| `location_events` | Background geolocation check audit trail |
+| `scores` | Weekly computed productivity scores and XP |
+| `badges` | Earned badges per employee |
+
+---
+
+## Performance Metrics
+
+The **Productivity Index** is a normalized 0–100 score computed weekly by the Python analytics engine.
+
+| Metric | Weight | Description |
+|---|---|---|
+| Revenue vs Target % | 30% | Actual revenue / weekly target |
+| Basket Performance Index | 20% | Avg basket size relative to dept average |
+| Manager Rating Score | 15% | Weekly avg of daily 1–5 manager ratings |
+| Growth Trend | 10% | Linear regression slope of weekly revenue |
+| Stability Index | 10% | Consistency score based on coefficient of variation |
+| App Conversion Rate | 10% | App downloads per bill, normalized to dept average |
+| Attendance Rate | 3% | Verified present days / total working days |
+| Punctuality Score | 2% | On-time check-ins relative to shift start |
+
+### Derived Metrics
+- **Stability Index** — `(1 - CoeffientOfVariation) × 100` — rewards consistency over volatility
+- **Growth Trend** — linear regression slope over weekly revenues, normalized across all employees
+- **Basket Performance Index** — employee basket size divided by department average, removes category bias
+
+---
+
+## Gamification System
+
+### XP Allocation
+| Productivity Index | XP Earned |
+|---|---|
+| 90 – 100 | 1000 XP |
+| 75 – 89 | 750 XP |
+| 60 – 74 | 500 XP |
+| Below 60 | 250 XP |
+
+### Bonus XP
+| Achievement | Bonus |
+|---|---|
+| 7-day attendance streak | +200 XP |
+| Top 3 on leaderboard | +300 XP |
+| Perfect manager rating week | +150 XP |
+
+### Level Thresholds
+| Level | Title | XP Required |
+|---|---|---|
+| 1 | Rookie | 0 XP |
+| 2 | Associate | 1,000 XP |
+| 3 | Performer | 3,000 XP |
+| 4 | Expert | 6,000 XP |
+| 5 | Champion | 10,000 XP |
+
+### Badges
+| Badge | Trigger |
+|---|---|
+| 🎯 Target Crusher | 3 consecutive weeks above 90% target |
+| 🪨 Rock Solid | Stability index above 85 for a month |
+| 📈 On The Rise | Positive growth trend for 4 weeks straight |
+| ✅ Never Miss | 100% attendance for 30 days |
+| 🌅 Early Bird | On-time every day for 2 weeks |
+| 📱 App Champion | Top app converter in department |
+| ⭐ Fan Favourite | Avg manager rating above 4.5 for a month |
+
+---
+
+## Attendance & Geofencing
+
+PerformIQ uses a **non-biometric, location-based attendance system** requiring no hardware.
+
+### Punch In Flow
+1. Employee taps "Mark Attendance" on their device
+2. Browser captures current GPS coordinates
+3. Backend calculates Haversine distance from store coordinates
+4. If within geofence radius (default 100m) → attendance approved and timestamped
+5. If outside → rejected with reason logged
+
+### Background Presence Monitoring
+After punch-in, a PWA service worker silently checks the employee's location every 30 minutes:
+- Inside geofence → logs a "present" event
+- Outside geofence → logs a "flag" event, triggers real-time manager alert via SSE
+- A 10-minute grace period handles short legitimate absences (breaks, loading dock, etc.)
+- Manager dashboard shows live color-coded presence status for all employees
+
+### Attendance Metrics Captured
+- Total hours worked (punch out - punch in)
+- Effective floor hours (total minus flagged durations)
+- Number of flagged exits per shift
+- Punctuality (time delta between shift start and punch in)
+
+---
+
+## Project Structure
+
+```
+performiq/
+├── client/                   # React frontend
+│   ├── src/
+│   │   ├── components/       # Reusable UI components
+│   │   ├── pages/
+│   │   │   ├── employee/     # Employee dashboard views
+│   │   │   └── manager/      # Manager analytics views
+│   │   ├── hooks/            # Custom React hooks
+│   │   ├── utils/            # Geofencing, API helpers
+│   │   └── App.jsx
+│   ├── public/
+│   │   └── manifest.json     # PWA manifest
+│   └── service-worker.js     # Background location checks
+│
+├── server/                   # Node.js backend
+│   ├── routes/
+│   │   ├── auth.js
+│   │   ├── attendance.js
+│   │   ├── performance.js
+│   │   └── manager.js
+│   ├── middleware/
+│   │   └── verifyToken.js    # Firebase token verification
+│   ├── utils/
+│   │   └── haversine.js      # Geofencing distance calculation
+│   ├── db/
+│   │   └── schema.sql        # SQLite schema
+│   └── index.js
+│
+├── analytics/                # Python scoring engine
+│   ├── compute_scores.py     # Main weekly scoring script
+│   ├── metrics/
+│   │   ├── productivity.py   # Weighted index computation
+│   │   ├── stability.py      # Variance-based stability
+│   │   ├── growth.py         # Linear regression trend
+│   │   └── clustering.py     # K-Means employee grouping
+│   └── requirements.txt
+│
+├── data/
+│   └── performiq.db          # SQLite database file
+│
+└── README.md
+```
+
+---
+## Team
+
+| Name | Enrollment Number |
+|---|---|
+| Saumya Shah | AU2220150 |
+| Suryaraj Jadeja | AU2220249 |
+| Om Patel | AU2220239 |
+| Parth Akholkar | AU2200011 |
+
+---
+
+*PerformIQ — Turning retail performance data into motivation, insight and action.*
