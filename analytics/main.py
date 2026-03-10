@@ -75,6 +75,57 @@ class PunchRequest(BaseModel):
     longitude: float
 
 
+class AuthRegister(BaseModel):
+    firebase_uid: str
+    name: str
+    email: str
+    role: str = "employee"
+    store_id: int = 1
+    department_id: int = 1
+
+
+# ==================== AUTH ENDPOINTS ====================
+
+@app.post("/api/auth/register")
+async def register_user(data: AuthRegister):
+    """Register a new user after Firebase sign-up."""
+    # Check if firebase_uid already registered
+    existing = query("SELECT id FROM employees WHERE firebase_uid = ?", (data.firebase_uid,), one=True)
+    if existing:
+        return await get_profile(data.firebase_uid)
+
+    employee_id = execute(
+        """INSERT INTO employees (name, email, role, department_id, store_id, firebase_uid, total_xp, level, level_title)
+           VALUES (?, ?, ?, ?, ?, ?, 0, 1, 'Rookie')""",
+        (data.name, data.email, data.role, data.department_id, data.store_id, data.firebase_uid),
+    )
+
+    return query(
+        """SELECT e.*, d.name as department_name, s.name as store_name
+           FROM employees e
+           JOIN departments d ON e.department_id = d.id
+           JOIN stores s ON e.store_id = s.id
+           WHERE e.id = ?""",
+        (employee_id,), one=True
+    )
+
+
+@app.get("/api/auth/profile/{firebase_uid}")
+async def get_profile(firebase_uid: str):
+    """Get employee profile by Firebase UID."""
+    emp = query(
+        """SELECT e.*, d.name as department_name, s.name as store_name
+           FROM employees e
+           JOIN departments d ON e.department_id = d.id
+           JOIN stores s ON e.store_id = s.id
+           WHERE e.firebase_uid = ?""",
+        (firebase_uid,), one=True
+    )
+    if not emp:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return emp
+
+
 # --- Date Range Helper ---
 def get_date_range(range_type: str = "weekly", start: str = None, end: str = None):
     """Compute start/end dates from range type."""

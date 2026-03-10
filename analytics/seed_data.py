@@ -47,7 +47,7 @@ DEPARTMENTS = [
 ]
 
 STORES = [
-    ("PerformIQ Flagship - Mumbai", "Andheri West, Mumbai", 19.1364, 72.8296, 100),
+    ("PerformIQ Flagship", "Ahmedabad, Gujarat", 22.991573, 72.539284, 200),
     ("PerformIQ Express - Pune", "Koregaon Park, Pune", 18.5362, 73.8939, 100),
 ]
 

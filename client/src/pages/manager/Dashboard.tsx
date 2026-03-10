@@ -19,29 +19,57 @@ export default function ManagerDashboard() {
     const { summary, departments, attendance } = data;
     const presentCount = attendance.filter(a => a.punch_in_time).length;
 
-    const COLORS = ['#F97316', '#FB923C', '#FDBA74', '#FED7AA'];
+    const COLORS = ['#3B82F6', '#60A5FA', '#93C5FD', '#BFDBFE'];
 
     return (
         <div className="animate-in">
+            {/* Command Center Banner */}
+            <div style={{
+                background: 'linear-gradient(135deg, rgba(59, 130, 246, 0.15), rgba(96, 165, 250, 0.08))',
+                border: '1px solid rgba(59, 130, 246, 0.2)',
+                borderRadius: 16, padding: '20px 24px', marginBottom: 24,
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            }}>
+                <div>
+                    <h3 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: 4 }}>
+                        🏢 Store Command Center
+                    </h3>
+                    <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                        Real-time overview · {new Date().toLocaleDateString('en-IN', { weekday: 'long', month: 'long', day: 'numeric' })}
+                    </span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                    <div style={{ textAlign: 'center' }}>
+                        <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--success)' }}>{presentCount}</div>
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>On Floor</div>
+                    </div>
+                    <div style={{ width: 1, height: 32, background: 'var(--border)' }} />
+                    <div style={{ textAlign: 'center' }}>
+                        <div style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--danger)' }}>{attendance.length - presentCount}</div>
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Absent</div>
+                    </div>
+                </div>
+            </div>
+
             {/* KPI Cards */}
             <div className="stats-grid">
                 <div className="stat-card">
-                    <div className="stat-icon"><IndianRupee size={20} /></div>
+                    <div className="stat-icon" style={{ background: 'rgba(59, 130, 246, 0.15)', color: '#3B82F6' }}><IndianRupee size={20} /></div>
                     <div className="stat-value">₹{(summary.total_revenue / 100000).toFixed(1)}L</div>
                     <div className="stat-label">Weekly Revenue</div>
                 </div>
                 <div className="stat-card">
-                    <div className="stat-icon"><Users size={20} /></div>
+                    <div className="stat-icon" style={{ background: 'rgba(59, 130, 246, 0.15)', color: '#3B82F6' }}><Users size={20} /></div>
                     <div className="stat-value">{summary.active_employees}</div>
                     <div className="stat-label">Active Employees</div>
                 </div>
                 <div className="stat-card">
-                    <div className="stat-icon"><Target size={20} /></div>
+                    <div className="stat-icon" style={{ background: 'rgba(59, 130, 246, 0.15)', color: '#3B82F6' }}><Target size={20} /></div>
                     <div className="stat-value">{summary.avg_target_achievement}%</div>
                     <div className="stat-label">Avg Target Achievement</div>
                 </div>
                 <div className="stat-card">
-                    <div className="stat-icon"><ClipboardCheck size={20} /></div>
+                    <div className="stat-icon" style={{ background: 'rgba(59, 130, 246, 0.15)', color: '#3B82F6' }}><ClipboardCheck size={20} /></div>
                     <div className="stat-value">{summary.pending_reviews}</div>
                     <div className="stat-label">Pending Reviews</div>
                 </div>

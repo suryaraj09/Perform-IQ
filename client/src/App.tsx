@@ -1,6 +1,8 @@
 import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation } from 'react-router-dom';
 import { useState, useEffect } from 'react';
-import { Sun, Moon, LayoutDashboard, Receipt, ShoppingBag, Trophy, Clock, ClipboardCheck, Users, Grid3X3 } from 'lucide-react';
+import { Sun, Moon, LayoutDashboard, Receipt, ShoppingBag, Trophy, Clock, ClipboardCheck, Users, Grid3X3, LogOut } from 'lucide-react';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import Login from './pages/auth/Login';
 import EmployeeDashboard from './pages/employee/Dashboard';
 import RecordSale from './pages/employee/RecordSale';
 import MySales from './pages/employee/MySales';
@@ -13,24 +15,54 @@ import Heatmap from './pages/manager/Heatmap';
 import './index.css';
 
 function App() {
+  return (
+    <AuthProvider>
+      <BrowserRouter>
+        <AppRoutes />
+      </BrowserRouter>
+    </AuthProvider>
+  );
+}
+
+function AppRoutes() {
+  const { profile, loading, handleSignOut } = useAuth();
+
   const [theme, setTheme] = useState<'dark' | 'light'>(() =>
-    (localStorage.getItem('theme') as 'dark' | 'light') || 'dark'
+    (localStorage.getItem('theme') as 'dark' | 'light') || 'light'
   );
-  const [role, setRole] = useState<'employee' | 'manager'>(() =>
-    (localStorage.getItem('role') as 'employee' | 'manager') || 'employee'
-  );
-  const [employeeId] = useState(1); // Default employee for demo
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('theme', theme);
   }, [theme]);
 
-  useEffect(() => {
-    localStorage.setItem('role', role);
-  }, [role]);
-
   const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark');
+
+  // Show loading spinner while auth state is resolving
+  if (loading) {
+    return (
+      <div className="auth-page" style={{ justifyContent: 'center' }}>
+        <div className="auth-logo">
+          <div className="auth-logo-icon" style={{ animation: 'pulse 1.5s ease infinite' }}>
+            <span style={{ fontSize: 28, fontWeight: 800 }}>PQ</span>
+          </div>
+          <p style={{ marginTop: 16, color: 'var(--text-muted)' }}>Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Not authenticated → show login
+  if (!profile) {
+    return (
+      <Routes>
+        <Route path="*" element={<Login />} />
+      </Routes>
+    );
+  }
+
+  const role = profile.role;
+  const employeeId = profile.id;
 
   const employeeLinks = [
     { to: '/employee/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
@@ -51,74 +83,85 @@ function App() {
   const defaultRoute = role === 'employee' ? '/employee/dashboard' : '/manager/dashboard';
 
   return (
-    <BrowserRouter>
-      <div className="app-layout">
-        {/* Sidebar */}
-        <aside className="sidebar">
-          <div className="sidebar-logo">
-            <div className="logo-icon">PQ</div>
-            <h1>PerformIQ</h1>
-          </div>
+    <div className="app-layout">
+      {/* Sidebar */}
+      <aside className={`sidebar ${role === 'manager' ? 'sidebar-manager' : 'sidebar-employee'}`}>
+        <div className="sidebar-logo">
+          <div className="logo-icon">PQ</div>
+          <h1>PerformIQ</h1>
+        </div>
 
-          <div className="sidebar-role">
-            {role === 'employee' ? '👤 Employee' : '👔 Manager'}
+        {/* User info */}
+        <div className="sidebar-user-info">
+          <div className="sidebar-user-avatar">
+            {profile.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
           </div>
+          <div className="sidebar-user-details">
+            <div className="sidebar-user-name">{profile.name}</div>
+            <div className="sidebar-user-role">{role === 'manager' ? '👔 Manager' : `⚡ Lv${profile.level} ${profile.level_title}`}</div>
+          </div>
+        </div>
 
-          {/* Role Switcher (dev/demo) */}
-          <div className="role-switcher">
-            <button className={role === 'employee' ? 'active' : ''} onClick={() => setRole('employee')}>
-              Employee
+        <nav className="sidebar-nav">
+          {links.map(link => (
+            <NavLink
+              key={link.to}
+              to={link.to}
+              className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}
+            >
+              <link.icon />
+              <span>{link.label}</span>
+            </NavLink>
+          ))}
+        </nav>
+
+        {/* Sign Out */}
+        <div style={{ padding: '12px', marginTop: 'auto' }}>
+          <button className="sidebar-link" onClick={handleSignOut} style={{ width: '100%', border: 'none', background: 'none' }}>
+            <LogOut size={20} />
+            <span>Sign Out</span>
+          </button>
+        </div>
+      </aside>
+
+      {/* Main Content */}
+      <main className="main-content">
+        <div className="top-bar">
+          <PageTitle />
+          <div className="top-bar-actions">
+            <button className="theme-toggle" onClick={toggleTheme} title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}>
+              {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
             </button>
-            <button className={role === 'manager' ? 'active' : ''} onClick={() => setRole('manager')}>
-              Manager
-            </button>
           </div>
+        </div>
 
-          <nav className="sidebar-nav">
-            {links.map(link => (
-              <NavLink
-                key={link.to}
-                to={link.to}
-                className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}
-              >
-                <link.icon />
-                <span>{link.label}</span>
-              </NavLink>
-            ))}
-          </nav>
-        </aside>
+        <Routes>
+          {/* Employee Routes */}
+          {role === 'employee' && (
+            <>
+              <Route path="/employee/dashboard" element={<EmployeeDashboard employeeId={employeeId} />} />
+              <Route path="/employee/record-sale" element={<RecordSale employeeId={employeeId} />} />
+              <Route path="/employee/my-sales" element={<MySales employeeId={employeeId} />} />
+              <Route path="/employee/leaderboard" element={<Leaderboard />} />
+              <Route path="/employee/attendance" element={<Attendance employeeId={employeeId} />} />
+            </>
+          )}
 
-        {/* Main Content */}
-        <main className="main-content">
-          <div className="top-bar">
-            <PageTitle />
-            <div className="top-bar-actions">
-              <button className="theme-toggle" onClick={toggleTheme} title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}>
-                {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
-              </button>
-            </div>
-          </div>
+          {/* Manager Routes */}
+          {role === 'manager' && (
+            <>
+              <Route path="/manager/dashboard" element={<ManagerDashboard />} />
+              <Route path="/manager/review-queue" element={<ReviewQueue />} />
+              <Route path="/manager/clustering" element={<Clustering />} />
+              <Route path="/manager/heatmap" element={<Heatmap />} />
+            </>
+          )}
 
-          <Routes>
-            {/* Employee Routes */}
-            <Route path="/employee/dashboard" element={<EmployeeDashboard employeeId={employeeId} />} />
-            <Route path="/employee/record-sale" element={<RecordSale employeeId={employeeId} />} />
-            <Route path="/employee/my-sales" element={<MySales employeeId={employeeId} />} />
-            <Route path="/employee/leaderboard" element={<Leaderboard />} />
-            <Route path="/employee/attendance" element={<Attendance employeeId={employeeId} />} />
-
-            {/* Manager Routes */}
-            <Route path="/manager/dashboard" element={<ManagerDashboard />} />
-            <Route path="/manager/review-queue" element={<ReviewQueue />} />
-            <Route path="/manager/clustering" element={<Clustering />} />
-            <Route path="/manager/heatmap" element={<Heatmap />} />
-
-            {/* Default redirect */}
-            <Route path="*" element={<Navigate to={defaultRoute} replace />} />
-          </Routes>
-        </main>
-      </div>
-    </BrowserRouter>
+          {/* Default redirect based on role */}
+          <Route path="*" element={<Navigate to={defaultRoute} replace />} />
+        </Routes>
+      </main>
+    </div>
   );
 }
 
@@ -130,7 +173,7 @@ function PageTitle() {
     '/employee/my-sales': 'My Sales',
     '/employee/leaderboard': 'Leaderboard',
     '/employee/attendance': 'Attendance',
-    '/manager/dashboard': 'Manager Dashboard',
+    '/manager/dashboard': 'Command Center',
     '/manager/review-queue': 'Review Queue',
     '/manager/clustering': 'Employee Clustering',
     '/manager/heatmap': 'Correlation Heatmap',
