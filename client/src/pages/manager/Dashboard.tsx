@@ -1,7 +1,8 @@
 import { useApi } from '../../hooks/useApi';
 import { useSSE } from '../../hooks/useSSE';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { IndianRupee, Users, Target, ClipboardCheck, Bell } from 'lucide-react';
+import { IndianRupee, Users, Target, ClipboardCheck, Bell, UserPlus, CheckCircle2, XCircle } from 'lucide-react';
+import { useState } from 'react';
 
 interface ManagerDashboardData {
     summary: { total_revenue: number; active_employees: number; avg_target_achievement: number; pending_reviews: number };
@@ -10,9 +11,38 @@ interface ManagerDashboardData {
     attendance: Array<{ id: number; name: string; department_name: string; punch_in_time: string | null; punch_out_time: string | null; hours_worked: number | null }>;
 }
 
+interface PendingEmployee {
+    id: number;
+    name: string;
+    email: string;
+    role: string;
+    department_name: string;
+    store_name: string;
+    created_at: string;
+}
+
 export default function ManagerDashboard() {
-    const { data, loading } = useApi<ManagerDashboardData>('/api/dashboard/manager');
+    const { data, loading, refetch } = useApi<ManagerDashboardData>('/api/dashboard/manager');
+    const { data: pendingEmployees, refetch: refetchPending } = useApi<PendingEmployee[]>('/api/manager/pending-employees');
     const { alerts } = useSSE();
+    const [actionLoading, setActionLoading] = useState<number | null>(null);
+
+    const handleReview = async (employeeId: number, status: 'approved' | 'rejected') => {
+        setActionLoading(employeeId);
+        try {
+            await fetch(`http://localhost:8000/api/manager/employees/${employeeId}/review`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status, reviewer_id: 1 }) // Hardcoded reviewer_id for now, can be extracted from profile later
+            });
+            await refetchPending();
+            await refetch(); // Refresh dashboard stats
+        } catch (err) {
+            console.error('Failed to review employee', err);
+        } finally {
+            setActionLoading(null);
+        }
+    };
 
     if (loading || !data) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>Loading manager dashboard...</div>;
 
@@ -142,6 +172,51 @@ export default function ManagerDashboard() {
                                 </div>
                             </div>
                         ))}
+                    </div>
+                </div>
+
+                {/* Pending Approvals */}
+                <div className="card">
+                    <div className="card-header">
+                        <span className="card-title">
+                            <UserPlus size={14} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 6 }} />
+                            Pending Approvals ({pendingEmployees?.length || 0})
+                        </span>
+                    </div>
+                    <div style={{ maxHeight: 300, overflowY: 'auto' }}>
+                        {pendingEmployees && pendingEmployees.length > 0 ? pendingEmployees.map(emp => (
+                            <div key={emp.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px', borderBottom: '1px solid var(--border)' }}>
+                                <div>
+                                    <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: 2 }}>{emp.name}</div>
+                                    <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem', display: 'flex', gap: 8 }}>
+                                        <span>{emp.email}</span>
+                                        <span>•</span>
+                                        <span>{emp.department_name}</span>
+                                    </div>
+                                </div>
+                                <div style={{ display: 'flex', gap: 8 }}>
+                                    <button 
+                                        onClick={() => handleReview(emp.id, 'approved')}
+                                        disabled={actionLoading === emp.id}
+                                        style={{ background: 'rgba(16, 185, 129, 0.1)', color: 'var(--success)', border: 'none', padding: '6px 12px', borderRadius: 6, display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}
+                                    >
+                                        <CheckCircle2 size={14} /> Approve
+                                    </button>
+                                    <button 
+                                        onClick={() => handleReview(emp.id, 'rejected')}
+                                        disabled={actionLoading === emp.id}
+                                        style={{ background: 'rgba(239, 68, 68, 0.1)', color: 'var(--danger)', border: 'none', padding: '6px 12px', borderRadius: 6, display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}
+                                    >
+                                        <XCircle size={14} /> Reject
+                                    </button>
+                                </div>
+                            </div>
+                        )) : (
+                            <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-muted)' }}>
+                                <UserPlus size={32} style={{ margin: '0 auto 12px', opacity: 0.5 }} />
+                                <p>No pending employee registrations.</p>
+                            </div>
+                        )}
                     </div>
                 </div>
 

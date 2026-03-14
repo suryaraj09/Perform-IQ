@@ -94,10 +94,13 @@ async def register_user(data: AuthRegister):
     if existing:
         return await get_profile(data.firebase_uid)
 
+    # Default status to 'pending' for employees, 'approved' for managers (for testing simplicity, or require admin approval)
+    status = 'pending' if data.role == 'employee' else 'approved'
+
     employee_id = execute(
-        """INSERT INTO employees (name, email, role, department_id, store_id, firebase_uid, total_xp, level, level_title)
-           VALUES (?, ?, ?, ?, ?, ?, 0, 1, 'Rookie')""",
-        (data.name, data.email, data.role, data.department_id, data.store_id, data.firebase_uid),
+        """INSERT INTO employees (name, email, role, department_id, store_id, firebase_uid, total_xp, level, level_title, status)
+           VALUES (?, ?, ?, ?, ?, ?, 0, 1, 'Rookie', ?)""",
+        (data.name, data.email, data.role, data.department_id, data.store_id, data.firebase_uid, status),
     )
 
     return query(
@@ -524,6 +527,37 @@ async def attendance_overview():
            ORDER BY e.name""",
         (today,),
     )
+
+
+@app.get("/api/manager/pending-employees")
+async def pending_employees(store_id: Optional[int] = None):
+    """Get all pending employee registrations for a store."""
+    where, params = "WHERE e.status = 'pending'", []
+    if store_id:
+        where += " AND e.store_id = ?"
+        params.append(store_id)
+        
+    return query(
+        f"""SELECT e.*, d.name as department_name, s.name as store_name
+            FROM employees e
+            JOIN departments d ON e.department_id = d.id
+            JOIN stores s ON e.store_id = s.id
+            {where} ORDER BY e.created_at DESC""",
+        tuple(params),
+    )
+
+
+@app.put("/api/manager/employees/{employee_id}/review")
+async def review_employee(employee_id: int, review: ReviewAction):
+    """Manager approves or rejects a pending employee registration."""
+    if review.status not in ["approved", "rejected"]:
+        raise HTTPException(status_code=400, detail="Invalid status")
+        
+    execute(
+        "UPDATE employees SET status = ? WHERE id = ?",
+        (review.status, employee_id),
+    )
+    return {"id": employee_id, "status": review.status, "message": f"Employee {review.status}"}
 
 
 # ==================== SSE ENDPOINT ====================

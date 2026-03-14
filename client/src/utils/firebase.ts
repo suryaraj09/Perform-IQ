@@ -37,6 +37,7 @@ export interface EmployeeProfile {
     level: number;
     level_title: string;
     firebase_uid: string;
+    status: 'pending' | 'approved' | 'rejected';
 }
 
 export async function signUp(

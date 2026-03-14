@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS employees (
     level_title TEXT NOT NULL DEFAULT 'Rookie',
     profile_photo_path TEXT,
     is_active INTEGER NOT NULL DEFAULT 1,
+    status TEXT NOT NULL CHECK(status IN ('pending', 'approved', 'rejected')) DEFAULT 'pending',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (department_id) REFERENCES departments(id),
     FOREIGN KEY (store_id) REFERENCES stores(id)

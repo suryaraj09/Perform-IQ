@@ -12,6 +12,7 @@ import ManagerDashboard from './pages/manager/Dashboard';
 import ReviewQueue from './pages/manager/ReviewQueue';
 import Clustering from './pages/manager/Clustering';
 import Heatmap from './pages/manager/Heatmap';
+import PendingApproval from './pages/auth/PendingApproval';
 import './index.css';
 
 function App() {
@@ -59,6 +60,11 @@ function AppRoutes() {
         <Route path="*" element={<Login />} />
       </Routes>
     );
+  }
+
+  // Pending approval → show pending screen
+  if (profile.status === 'pending') {
+    return <PendingApproval />;
   }
 
   const role = profile.role;
