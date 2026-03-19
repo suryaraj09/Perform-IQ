@@ -34,21 +34,36 @@ EMPLOYEE_DATA = [
     ("Arjun Verma", "arjun@example.com", "9876543220", "employee", "steady"),
     ("Sanya Mehta", "sanya@example.com", "9876543221", "employee", "star"),
     ("Karan Malhotra", "karan@example.com", "9876543222", "employee", "growing"),
+    ("Meera Shah", "meera.s@example.com", "9876543223", "employee", "steady"),
+    ("Rajesh Khanna", "rajesh@example.com", "9876543224", "employee", "growing"),
+    ("Sneha Kapoor", "sneha@example.com", "9876543225", "employee", "star"),
+    ("Vijay Mallya", "vijay@example.com", "9876543226", "employee", "underperformer"),
+    ("Ayesha Khan", "ayesha@example.com", "9876543227", "employee", "steady"),
+    ("Zaid Shaikh", "zaid@example.com", "9876543228", "employee", "growing"),
+    ("Ishita Bhalla", "ishita@example.com", "9876543229", "employee", "inconsistent"),
+    ("Tushar Deshpande", "tushar@example.com", "9876543232", "employee", "growing"),
+    ("Pooja Hegde", "pooja@example.com", "9876543233", "employee", "star"),
+    ("Manish Pandey", "manish@example.com", "9876543234", "employee", "steady"),
+    ("Jahnvi Kapoor", "jahnvi@example.com", "9876543235", "employee", "growing"),
     # Managers
     ("Alex Thompson", "alex@example.com", "9876543230", "manager", "star"),
     ("Meera Iyer", "meera@example.com", "9876543231", "manager", "steady"),
 ]
 
 DEPARTMENTS = [
-    ("Electronics", 500000, 8000, 0.15),
-    ("Apparel", 350000, 4500, 0.10),
-    ("Footwear", 300000, 5500, 0.08),
-    ("Home Goods", 250000, 6000, 0.05),
+    ("Shirts", 450000, 6500, 0.12),
+    ("Kurtas", 300000, 5000, 0.08),
+    ("Polos", 250000, 4000, 0.10),
+    ("Tees", 200000, 3000, 0.05),
+    ("Shorts", 150000, 2500, 0.07),
+    ("Denims", 500000, 8000, 0.15),
+    ("Trousers", 400000, 7000, 0.13),
+    ("Cargos", 350000, 6000, 0.11),
 ]
 
 STORES = [
-    ("PerformIQ Flagship", "Ahmedabad, Gujarat", 22.991573, 72.539284, 200),
-    ("PerformIQ Express - Pune", "Koregaon Park, Pune", 18.5362, 73.8939, 100),
+    ("Blue Buddha Flagship", "Ahmedabad, Gujarat", 22.991573, 72.539284, 200),
+    ("Blue Buddha Outlet", "Surat, Gujarat", 21.170240, 72.831061, 150),
 ]
 
 BADGE_DEFINITIONS = [
@@ -63,7 +78,6 @@ BADGE_DEFINITIONS = [
 
 
 def create_db():
-    """Create database and apply schema."""
     os.makedirs(DB_PATH.parent, exist_ok=True)
     if DB_PATH.exists():
         DB_PATH.unlink()
@@ -96,9 +110,18 @@ def seed_departments(conn):
 def seed_employees(conn):
     emp_ids = []
     for i, (name, email, phone, role, archetype) in enumerate(EMPLOYEE_DATA):
-        store_id = 1 if i < 10 else 2
-        dept_offset = 0 if store_id == 1 else 4
-        dept_id = dept_offset + (i % 4) + 1
+        if role == "manager":
+            store_id = 1 if "Thompson" in name else 2
+            dept_id = 1 if store_id == 1 else 2
+        else:
+            # 24 employees, 14 in store 1, 10 in store 2
+            store_id = 1 if i < 14 else 2
+            dept_idx = i % 8
+            if store_id == 1:
+                dept_id = (dept_idx * 2) + 1
+            else:
+                dept_id = (dept_idx * 2) + 2
+
         conn.execute(
             "INSERT INTO employees (name, email, phone, role, department_id, store_id) VALUES (?, ?, ?, ?, ?, ?)",
             (name, email, phone, role, dept_id, store_id),
@@ -109,8 +132,7 @@ def seed_employees(conn):
 
 
 def seed_sales(conn, employees):
-    """Generate 8 weeks of per-sale records."""
-    start_date = datetime(2026, 1, 12)  # 8 weeks ago from ~Mar 9
+    start_date = datetime(2026, 1, 12)
 
     for emp_id, archetype, dept_id, store_id in employees:
         if EMPLOYEE_DATA[emp_id - 1][3] == "manager":
@@ -120,39 +142,38 @@ def seed_sales(conn, employees):
         base_rev = sum(arch["rev_range"]) / 2
 
         for week in range(8):
-            # Apply growth trend
             growth_factor = 1 + (arch["growth"] * week)
             week_start = start_date + timedelta(weeks=week)
 
-            for day_offset in range(6):  # 6 working days
+            for day_offset in range(6):
                 day = week_start + timedelta(days=day_offset)
                 if day > datetime(2026, 3, 9):
                     break
 
-                # Number of sales per day (5-15)
                 num_sales = random.randint(5, 15)
 
-                # Consistency affects daily variation
                 if random.random() > arch["consistency"]:
-                    # Bad day
+
                     num_sales = random.randint(2, 6)
 
                 for _ in range(num_sales):
                     rev = random.uniform(*arch["rev_range"]) / num_sales * growth_factor
-                    rev = max(200, rev)  # Minimum sale
+                    rev = max(200, rev)
                     basket = random.uniform(*arch["basket_range"]) / num_sales * growth_factor
                     basket = max(100, basket)
                     num_items = random.randint(1, 5)
+                    app_dl = 1 if random.random() < 0.15 else 0
 
                     conn.execute(
-                        """INSERT INTO sales (employee_id, revenue, basket_size, num_items, 
+                        """INSERT INTO sales (employee_id, revenue, basket_size, num_items, app_download,
                            status, submitted_at, sale_date, receipt_photo_path)
-                           VALUES (?, ?, ?, ?, 'approved', ?, ?, ?)""",
+                           VALUES (?, ?, ?, ?, ?, 'approved', ?, ?, ?)""",
                         (
                             emp_id,
                             round(rev, 2),
                             round(basket, 2),
                             num_items,
+                            app_dl,
                             day.strftime("%Y-%m-%d %H:%M:%S"),
                             day.strftime("%Y-%m-%d"),
                             f"uploads/receipts/placeholder_{emp_id}_{day.strftime('%Y%m%d')}.jpg",
@@ -163,14 +184,12 @@ def seed_sales(conn, employees):
 
 
 def seed_app_downloads(conn, employees):
-    """Generate app download records."""
     start_date = datetime(2026, 1, 12)
 
     for emp_id, archetype, dept_id, store_id in employees:
         if EMPLOYEE_DATA[emp_id - 1][3] == "manager":
             continue
 
-        # Downloads per day based on archetype
         daily_downloads = {"star": (2, 5), "steady": (1, 3), "growing": (1, 4), "inconsistent": (0, 3), "underperformer": (0, 2)}
         dl_range = daily_downloads[archetype]
 
@@ -218,11 +237,9 @@ def seed_attendance(conn, employees, stores_data=STORES):
                 if day > datetime(2026, 3, 9):
                     break
 
-                # Skip some days based on attendance rate
                 if random.random() > attendance_rate[archetype]:
                     continue
 
-                # Punch in time (shift starts at 9:00)
                 if random.random() < punctuality[archetype]:
                     punch_in_hour = 8
                     punch_in_min = random.randint(40, 59)
@@ -232,14 +249,12 @@ def seed_attendance(conn, employees, stores_data=STORES):
 
                 punch_in = day.replace(hour=punch_in_hour, minute=punch_in_min)
 
-                # Punch out (shift ends at 21:00)
                 punch_out_hour = random.randint(20, 21)
                 punch_out_min = random.randint(0, 30)
                 punch_out = day.replace(hour=punch_out_hour, minute=punch_out_min)
 
                 hours = (punch_out - punch_in).total_seconds() / 3600
 
-                # GPS coordinates (slightly offset from store)
                 lat_offset = random.uniform(-0.0005, 0.0005)  # ~50m
                 lng_offset = random.uniform(-0.0005, 0.0005)
 
@@ -268,7 +283,6 @@ def seed_attendance(conn, employees, stores_data=STORES):
 
 
 def seed_manager_ratings(conn, employees):
-    """Generate daily manager ratings."""
     start_date = datetime(2026, 1, 12)
     manager_ids = [eid for eid, arch, did, sid in employees if EMPLOYEE_DATA[eid - 1][3] == "manager"]
 
@@ -287,7 +301,7 @@ def seed_manager_ratings(conn, employees):
                 if day > datetime(2026, 3, 9):
                     break
 
-                if random.random() < 0.85:  # Not every day gets a rating
+                if random.random() < 0.85:
                     rating = min(5, max(1, round(base + random.uniform(-0.8, 0.8))))
                     try:
                         conn.execute(
@@ -296,7 +310,7 @@ def seed_manager_ratings(conn, employees):
                             (emp_id, manager_id, rating, day.strftime("%Y-%m-%d")),
                         )
                     except sqlite3.IntegrityError:
-                        pass  # Skip duplicate date
+                        pass
 
     conn.commit()
 
@@ -325,7 +339,6 @@ def seed_badges(conn, employees):
 
 
 def calculate_xp(conn, employees):
-    """Calculate initial XP based on seed data performance."""
     level_thresholds = [(10000, 5, "Champion"), (6000, 4, "Expert"), (3000, 3, "Performer"), (1000, 2, "Associate"), (0, 1, "Rookie")]
     xp_map = {"star": 8500, "steady": 5500, "growing": 3200, "inconsistent": 1800, "underperformer": 800}
 
@@ -381,7 +394,6 @@ def main():
     print("  → Calculating XP & levels...")
     calculate_xp(conn, employees)
 
-    # Print summary
     cursor = conn.cursor()
     tables = ["stores", "departments", "employees", "sales", "app_downloads", "attendance", "manager_ratings", "badges"]
     print("\n📊 Database Summary:")

@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation } from 'react-router-dom';
-import { useState, useEffect } from 'react';
-import { Sun, Moon, LayoutDashboard, Receipt, ShoppingBag, Trophy, Clock, ClipboardCheck, Users, Grid3X3, LogOut } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Sun, Moon, LayoutDashboard, Receipt, ShoppingBag, Trophy, Clock, ClipboardCheck, Users, Grid3X3, LogOut, Flag } from 'lucide-react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Login from './pages/auth/Login';
 import EmployeeDashboard from './pages/employee/Dashboard';
@@ -12,6 +12,7 @@ import ManagerDashboard from './pages/manager/Dashboard';
 import ReviewQueue from './pages/manager/ReviewQueue';
 import Clustering from './pages/manager/Clustering';
 import Heatmap from './pages/manager/Heatmap';
+import FlaggedSales from './pages/manager/FlaggedSales';
 import PendingApproval from './pages/auth/PendingApproval';
 import './index.css';
 
@@ -38,6 +39,23 @@ function AppRoutes() {
   }, [theme]);
 
   const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark');
+
+  // Flagged sales badge count for manager nav
+  const [flaggedCount, setFlaggedCount] = useState(0);
+  const fetchFlaggedCount = useCallback(async () => {
+    if (!profile || profile.role !== 'manager') return;
+    try {
+      const res = await fetch('http://localhost:8000/api/admin/flagged-sales');
+      const data = await res.json();
+      setFlaggedCount(Array.isArray(data) ? data.length : 0);
+    } catch { /* silent */ }
+  }, [profile]);
+
+  useEffect(() => {
+    fetchFlaggedCount();
+    const interval = setInterval(fetchFlaggedCount, 60000);
+    return () => clearInterval(interval);
+  }, [fetchFlaggedCount]);
 
   // Show loading spinner while auth state is resolving
   if (loading) {
@@ -81,6 +99,7 @@ function AppRoutes() {
   const managerLinks = [
     { to: '/manager/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
     { to: '/manager/review-queue', icon: ClipboardCheck, label: 'Review Queue' },
+    { to: '/manager/flagged-sales', icon: Flag, label: 'Flagged Sales', badge: flaggedCount },
     { to: '/manager/clustering', icon: Users, label: 'Clustering' },
     { to: '/manager/heatmap', icon: Grid3X3, label: 'Heatmap' },
   ];
@@ -117,6 +136,13 @@ function AppRoutes() {
             >
               <link.icon />
               <span>{link.label}</span>
+              {'badge' in link && (link as any).badge > 0 && (
+                <span style={{
+                  marginLeft: 'auto', background: '#ef4444', color: '#fff',
+                  borderRadius: 10, padding: '1px 7px', fontSize: '0.7rem', fontWeight: 700,
+                  minWidth: 18, textAlign: 'center',
+                }}>{(link as any).badge}</span>
+              )}
             </NavLink>
           ))}
         </nav>
@@ -149,7 +175,7 @@ function AppRoutes() {
               <Route path="/employee/record-sale" element={<RecordSale employeeId={employeeId} />} />
               <Route path="/employee/my-sales" element={<MySales employeeId={employeeId} />} />
               <Route path="/employee/leaderboard" element={<Leaderboard />} />
-              <Route path="/employee/attendance" element={<Attendance employeeId={employeeId} />} />
+              <Route path="/employee/attendance" element={<Attendance employeeId={employeeId} employeeName={profile.name} />} />
             </>
           )}
 
@@ -158,6 +184,7 @@ function AppRoutes() {
             <>
               <Route path="/manager/dashboard" element={<ManagerDashboard />} />
               <Route path="/manager/review-queue" element={<ReviewQueue />} />
+              <Route path="/manager/flagged-sales" element={<FlaggedSales />} />
               <Route path="/manager/clustering" element={<Clustering />} />
               <Route path="/manager/heatmap" element={<Heatmap />} />
             </>
@@ -181,6 +208,7 @@ function PageTitle() {
     '/employee/attendance': 'Attendance',
     '/manager/dashboard': 'Command Center',
     '/manager/review-queue': 'Review Queue',
+    '/manager/flagged-sales': 'Flagged Sales',
     '/manager/clustering': 'Employee Clustering',
     '/manager/heatmap': 'Correlation Heatmap',
   };

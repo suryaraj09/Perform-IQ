@@ -9,7 +9,6 @@ SCHEMA_PATH = Path(__file__).parent.parent / "server" / "db" / "schema.sql"
 
 
 def get_connection() -> sqlite3.Connection:
-    """Get a SQLite connection with row factory enabled."""
     conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode = WAL")
@@ -18,7 +17,6 @@ def get_connection() -> sqlite3.Connection:
 
 
 def init_db():
-    """Initialize the database with schema if it doesn't exist."""
     os.makedirs(DB_PATH.parent, exist_ok=True)
     conn = get_connection()
     with open(SCHEMA_PATH, "r") as f:
@@ -28,7 +26,6 @@ def init_db():
 
 
 def query(sql: str, params: tuple = (), one: bool = False):
-    """Execute a read query and return results as list of dicts."""
     conn = get_connection()
     try:
         cursor = conn.execute(sql, params)
@@ -41,7 +38,6 @@ def query(sql: str, params: tuple = (), one: bool = False):
 
 
 def execute(sql: str, params: tuple = ()) -> int:
-    """Execute a write query and return the last row id."""
     conn = get_connection()
     try:
         cursor = conn.execute(sql, params)
@@ -52,7 +48,6 @@ def execute(sql: str, params: tuple = ()) -> int:
 
 
 def execute_many(sql: str, params_list: list):
-    """Execute a write query with many parameter sets."""
     conn = get_connection()
     try:
         conn.executemany(sql, params_list)

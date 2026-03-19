@@ -58,12 +58,10 @@ BADGE_DEFINITIONS = {
     },
 }
 
-
+# Please look at this code what shitty bug is here. If you can please fix this shit piece
 def get_level_info(total_xp: int) -> dict:
-    """Get level and title from XP."""
     for threshold, level, title in LEVEL_THRESHOLDS:
         if total_xp >= threshold:
-            # Calculate progress to next level
             next_idx = LEVEL_THRESHOLDS.index((threshold, level, title)) - 1
             if next_idx >= 0:
                 next_threshold = LEVEL_THRESHOLDS[next_idx][0]
@@ -86,7 +84,6 @@ def get_level_info(total_xp: int) -> dict:
 
 
 def get_xp_for_score(productivity_index: float) -> int:
-    """Determine XP earned from a productivity score."""
     for threshold, xp in XP_TIERS:
         if productivity_index >= threshold:
             return xp
@@ -94,7 +91,6 @@ def get_xp_for_score(productivity_index: float) -> int:
 
 
 def get_employee_gamification(employee_id: int) -> dict:
-    """Get full gamification state for an employee."""
     emp = query("SELECT total_xp, level, level_title FROM employees WHERE id = ?", (employee_id,), one=True)
     if not emp:
         return None
@@ -106,7 +102,6 @@ def get_employee_gamification(employee_id: int) -> dict:
         (employee_id,),
     )
 
-    # Calculate streak (consecutive attendance days)
     streak = _calculate_streak(employee_id)
 
     return {
@@ -125,7 +120,6 @@ def get_employee_gamification(employee_id: int) -> dict:
 
 
 def _calculate_streak(employee_id: int) -> int:
-    """Calculate consecutive attendance days."""
     records = query(
         """SELECT attendance_date FROM attendance 
            WHERE employee_id = ? AND punch_in_status = 'approved'
@@ -144,7 +138,6 @@ def _calculate_streak(employee_id: int) -> int:
         prev = datetime.strptime(records[i]["attendance_date"], "%Y-%m-%d")
         diff = (curr - prev).days
 
-        # Allow 1-2 day gap for weekends
         if diff <= 2:
             streak += 1
         else:
@@ -154,7 +147,6 @@ def _calculate_streak(employee_id: int) -> int:
 
 
 def get_leaderboard(department_id: int = None, store_id: int = None, limit: int = 20) -> list:
-    """Get ranked leaderboard."""
     where = "WHERE e.role = 'employee' AND e.is_active = 1"
     params = []
 

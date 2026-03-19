@@ -1,7 +1,14 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useApi } from '../../hooks/useApi';
 import { api } from '../../utils/api';
 import { MapPin, Clock, CheckCircle, XCircle } from 'lucide-react';
+import {
+    STORE_LAT,
+    STORE_LNG,
+    GEOFENCE_RADIUS,
+    GEOFENCE_CHECK_INTERVAL,
+    haversineDistance,
+} from '../../utils/geofenceConfig';
 
 interface AttendanceStatus {
     is_punched_in: boolean;
@@ -22,13 +29,106 @@ interface AttendanceRecord {
     hours_worked: number;
     attendance_date: string;
     punch_in_distance_meters: number;
+    geofence_flagged?: boolean;
 }
 
-export default function Attendance({ employeeId }: { employeeId: number }) {
+export default function Attendance({ employeeId, employeeName }: { employeeId: number; employeeName?: string }) {
     const { data: status, refetch: refetchStatus } = useApi<AttendanceStatus>(`/api/attendance/status/${employeeId}`);
     const { data: history } = useApi<AttendanceRecord[]>(`/api/attendance?employee_id=${employeeId}`);
     const [punching, setPunching] = useState(false);
     const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
+
+    // Geofence tracking refs (silent — no UI)
+    const geofenceIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const consecutiveFailCountRef = useRef(0);
+    const firstFailTimeRef = useRef<string | null>(null);
+
+    const stopGeofenceChecks = useCallback(() => {
+        if (geofenceIntervalRef.current) {
+            clearInterval(geofenceIntervalRef.current);
+            geofenceIntervalRef.current = null;
+        }
+        consecutiveFailCountRef.current = 0;
+        firstFailTimeRef.current = null;
+    }, []);
+
+    const runGeofenceCheck = useCallback(async () => {
+        try {
+            const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+                navigator.geolocation.getCurrentPosition(resolve, reject, {
+                    enableHighAccuracy: true,
+                    timeout: 10000,
+                });
+            });
+
+            const distance = haversineDistance(
+                position.coords.latitude,
+                position.coords.longitude,
+                STORE_LAT,
+                STORE_LNG
+            );
+
+            if (distance <= GEOFENCE_RADIUS) {
+                // PASS — reset counter
+                consecutiveFailCountRef.current = 0;
+                firstFailTimeRef.current = null;
+            } else {
+                // FAIL — outside radius
+                handleGeofenceFail();
+            }
+        } catch {
+            // Location unavailable / permission denied = FAIL
+            handleGeofenceFail();
+        }
+    }, []);
+
+    const handleGeofenceFail = useCallback(() => {
+        const now = new Date().toISOString();
+
+        if (consecutiveFailCountRef.current === 0) {
+            firstFailTimeRef.current = now;
+        }
+
+        consecutiveFailCountRef.current += 1;
+
+        if (consecutiveFailCountRef.current >= 2) {
+            // Send alert to admin
+            try {
+                api('/api/alerts/geofence', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        employeeId,
+                        employeeName: employeeName || 'Unknown',
+                        punchInTime: status?.punch_in_time || new Date().toISOString(),
+                        firstFailTime: firstFailTimeRef.current,
+                        secondFailTime: now,
+                        alertType: 'GEOFENCE_ABSENCE',
+                    }),
+                });
+            } catch {
+                // Silent — do not show errors for background checks
+            }
+
+            // Reset cycle
+            consecutiveFailCountRef.current = 0;
+            firstFailTimeRef.current = null;
+        }
+    }, [employeeId, employeeName, status?.punch_in_time]);
+
+    // Start/stop geofence interval based on punch-in status
+    useEffect(() => {
+        if (status?.is_punched_in) {
+            // Run an immediate check, then every 15 minutes
+            runGeofenceCheck();
+            geofenceIntervalRef.current = setInterval(runGeofenceCheck, GEOFENCE_CHECK_INTERVAL);
+        } else {
+            stopGeofenceChecks();
+        }
+
+        return () => {
+            stopGeofenceChecks();
+        };
+    }, [status?.is_punched_in, runGeofenceCheck, stopGeofenceChecks]);
 
     const handlePunch = useCallback(async () => {
         setPunching(true);
@@ -50,13 +150,32 @@ export default function Attendance({ employeeId }: { employeeId: number }) {
             });
 
             setResult(res);
+
+            // If punching out, stop geofence checks
+            if (status?.is_punched_in) {
+                stopGeofenceChecks();
+            }
+
             refetchStatus();
         } catch (err) {
             setResult({ success: false, message: err instanceof GeolocationPositionError ? 'Location access denied. Please enable GPS.' : 'Failed to process attendance.' });
         } finally {
             setPunching(false);
         }
-    }, [employeeId, status, refetchStatus]);
+    }, [employeeId, status, refetchStatus, stopGeofenceChecks]);
+
+    const getStatusBadge = (record: AttendanceRecord) => {
+        if (!record.punch_in_time && !record.punch_out_time) {
+            return <span className="status" style={{ background: 'rgba(239, 68, 68, 0.15)', color: '#ef4444' }}>✗ Absent</span>;
+        }
+        if (record.geofence_flagged) {
+            return <span className="status" style={{ background: 'rgba(245, 158, 11, 0.15)', color: '#f59e0b' }}>⚠ Flagged</span>;
+        }
+        if (record.punch_in_status === 'approved') {
+            return <span className="status status-approved">✓ Verified</span>;
+        }
+        return <span className="status" style={{ background: 'rgba(239, 68, 68, 0.15)', color: '#ef4444' }}>✗ Rejected</span>;
+    };
 
     return (
         <div className="animate-in">
@@ -121,11 +240,7 @@ export default function Attendance({ employeeId }: { employeeId: number }) {
                                 <td>{record.punch_in_time?.split(' ')[1] || '-'}</td>
                                 <td>{record.punch_out_time?.split(' ')[1] || '-'}</td>
                                 <td style={{ fontWeight: 600 }}>{record.hours_worked ? `${record.hours_worked.toFixed(1)}h` : '-'}</td>
-                                <td>
-                                    <span className={`status status-${record.punch_in_status}`}>
-                                        {record.punch_in_status === 'approved' ? '✓ Verified' : '✗ Rejected'}
-                                    </span>
-                                </td>
+                                <td>{getStatusBadge(record)}</td>
                             </tr>
                         ))}
                     </tbody>

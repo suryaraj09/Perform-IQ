@@ -1,12 +1,13 @@
-"""PerformIQ — FastAPI Analytics Backend."""
-
+# no one touches this code without my permission, This is the only portion you need my permission
+# don't do anything here without letting me know
 import os
 import sys
 import uuid
+import json
 import asyncio
 from pathlib import Path
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, List
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,7 +15,6 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-# Ensure imports work
 sys.path.insert(0, str(Path(__file__).parent))
 
 from database import init_db, query, execute
@@ -24,7 +24,6 @@ from metrics.clustering import cluster_employees
 from gamification import get_employee_gamification, get_leaderboard, get_level_info, get_xp_for_score
 from attendance import punch_in, punch_out, get_attendance_status
 
-# --- App Setup ---
 app = FastAPI(title="PerformIQ API", version="1.0.0")
 
 app.add_middleware(
@@ -35,7 +34,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Static file serving for uploads
 UPLOAD_DIR = Path(__file__).parent.parent / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 (UPLOAD_DIR / "receipts").mkdir(exist_ok=True)
@@ -43,16 +41,15 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 
-# SSE event queue for manager alerts
+
 alert_queues: list = []
 
 
-# --- Pydantic Models ---
 class SaleSubmission(BaseModel):
     employee_id: int
     revenue: float
-    basket_size: float
     num_items: int = 1
+    app_download: bool = False
     receipt_photo_path: Optional[str] = None
 
 
@@ -75,6 +72,15 @@ class PunchRequest(BaseModel):
     longitude: float
 
 
+class GeofenceAlert(BaseModel):
+    employeeId: int
+    employeeName: str
+    punchInTime: str
+    firstFailTime: str
+    secondFailTime: str
+    alertType: str = "GEOFENCE_ABSENCE"
+
+
 class AuthRegister(BaseModel):
     firebase_uid: str
     name: str
@@ -84,17 +90,11 @@ class AuthRegister(BaseModel):
     department_id: int = 1
 
 
-# ==================== AUTH ENDPOINTS ====================
-
 @app.post("/api/auth/register")
 async def register_user(data: AuthRegister):
-    """Register a new user after Firebase sign-up."""
-    # Check if firebase_uid already registered
     existing = query("SELECT id FROM employees WHERE firebase_uid = ?", (data.firebase_uid,), one=True)
     if existing:
         return await get_profile(data.firebase_uid)
-
-    # Default status to 'pending' for employees, 'approved' for managers (for testing simplicity, or require admin approval)
     status = 'pending' if data.role == 'employee' else 'approved'
 
     employee_id = execute(
@@ -115,7 +115,6 @@ async def register_user(data: AuthRegister):
 
 @app.get("/api/auth/profile/{firebase_uid}")
 async def get_profile(firebase_uid: str):
-    """Get employee profile by Firebase UID."""
     emp = query(
         """SELECT e.*, d.name as department_name, s.name as store_name
            FROM employees e
@@ -129,9 +128,8 @@ async def get_profile(firebase_uid: str):
     return emp
 
 
-# --- Date Range Helper ---
+
 def get_date_range(range_type: str = "weekly", start: str = None, end: str = None):
-    """Compute start/end dates from range type."""
     today = datetime.now()
     if range_type == "custom" and start and end:
         return start, end
@@ -140,26 +138,160 @@ def get_date_range(range_type: str = "weekly", start: str = None, end: str = Non
     elif range_type == "monthly":
         start_date = today.replace(day=1)
         return start_date.strftime("%Y-%m-%d"), today.strftime("%Y-%m-%d")
-    else:  # weekly (default)
+    else:  # weekly (default) don't touch this block please
         start_date = today - timedelta(days=today.weekday())
         return start_date.strftime("%Y-%m-%d"), today.strftime("%Y-%m-%d")
 
 
 def get_full_date_range():
-    """Get the full 8-week date range for overall stats."""
     return "2026-01-12", datetime.now().strftime("%Y-%m-%d")
 
 
-# --- Startup ---
+# ==================== FLAG DETECTION HELPERS ====================
+
+def get_employee_avg_sale(employee_id: int) -> float:
+    """Get avg sale amount from last 20 sales, or dept average if < 5 sales."""
+    sales = query(
+        "SELECT revenue FROM sales WHERE employee_id = ? ORDER BY submitted_at DESC LIMIT 20",
+        (employee_id,)
+    )
+    if len(sales) >= 5:
+        return sum(s["revenue"] for s in sales) / len(sales)
+    # Fall back to department average
+    dept = query(
+        """SELECT COALESCE(AVG(s.revenue), 0) as avg_rev FROM sales s
+           JOIN employees e ON s.employee_id = e.id
+           WHERE e.department_id = (SELECT department_id FROM employees WHERE id = ?)""",
+        (employee_id,), one=True
+    )
+    return dept["avg_rev"] if dept and dept["avg_rev"] > 0 else 5000.0
+
+
+def get_last_sale_timestamp(employee_id: int):
+    """Get Unix ms timestamp of most recent sale, or None."""
+    row = query(
+        "SELECT submitted_at FROM sales WHERE employee_id = ? ORDER BY submitted_at DESC LIMIT 1",
+        (employee_id,), one=True
+    )
+    if not row or not row["submitted_at"]:
+        return None
+    dt = datetime.strptime(row["submitted_at"], "%Y-%m-%d %H:%M:%S")
+    return dt.timestamp() * 1000
+
+
+def has_active_punch_in(employee_id: int) -> bool:
+    """Check if employee currently has an active punch-in session."""
+    row = query(
+        """SELECT id FROM attendance WHERE employee_id = ? 
+           AND punch_in_time IS NOT NULL AND punch_out_time IS NULL
+           ORDER BY attendance_date DESC LIMIT 1""",
+        (employee_id,), one=True
+    )
+    return row is not None
+
+
+def get_app_download_rate(employee_id: int) -> float:
+    """Get app download rate from sales in last 7 days."""
+    seven_days_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+    today = datetime.now().strftime("%Y-%m-%d")
+    total = query(
+        "SELECT COUNT(*) as v FROM sales WHERE employee_id = ? AND sale_date BETWEEN ? AND ?",
+        (employee_id, seven_days_ago, today), one=True
+    )
+    downloads = query(
+        "SELECT COUNT(*) as v FROM sales WHERE employee_id = ? AND app_download = 1 AND sale_date BETWEEN ? AND ?",
+        (employee_id, seven_days_ago, today), one=True
+    )
+    total_bills = total["v"] if total else 0
+    if total_bills == 0:
+        return 0.0
+    return (downloads["v"] if downloads else 0) / total_bills
+
+
+def check_for_flags(sale_revenue: float, num_items: int, app_download: bool, employee_id: int) -> list:
+    """Run all 5 flag rules and return triggered flags."""
+    flags = []
+
+    # RULE 1 — HIGH_SALE_AMOUNT
+    avg_sale = get_employee_avg_sale(employee_id)
+    if sale_revenue > avg_sale * 3:
+        flags.append({
+            "rule": "HIGH_SALE_AMOUNT",
+            "detail": f"Sale \u20b9{sale_revenue:.0f} is 3x above average \u20b9{avg_sale:.0f}"
+        })
+
+    # RULE 2 — HIGH_ITEM_COUNT
+    if num_items > 15:
+        flags.append({
+            "rule": "HIGH_ITEM_COUNT",
+            "detail": f"{num_items} items in a single bill is unusually high"
+        })
+
+    # RULE 3 — RAPID_SUBMISSION
+    last_ts = get_last_sale_timestamp(employee_id)
+    if last_ts is not None:
+        now_ms = datetime.now().timestamp() * 1000
+        diff_seconds = (now_ms - last_ts) / 1000
+        if diff_seconds < 120:
+            flags.append({
+                "rule": "RAPID_SUBMISSION",
+                "detail": f"Submitted {int(diff_seconds)}s after previous sale"
+            })
+
+    # RULE 4 — NO_ACTIVE_SESSION
+    if not has_active_punch_in(employee_id):
+        flags.append({
+            "rule": "NO_ACTIVE_SESSION",
+            "detail": "Sale submitted without an active punch in session"
+        })
+
+    # RULE 5 — HIGH_APP_DOWNLOAD_RATE
+    if app_download:
+        dl_rate = get_app_download_rate(employee_id)
+        if dl_rate > 0.80:
+            flags.append({
+                "rule": "HIGH_APP_DOWNLOAD_RATE",
+                "detail": f"App download rate of {dl_rate*100:.0f}% over last 7 days is suspiciously high"
+            })
+
+    return flags
+
+
+# ==================== AUTO-CONFIRM TASK ====================
+
+async def auto_confirm_flagged_sales():
+    """Auto-confirm flagged sales older than 48 hours, runs every hour."""
+    while True:
+        await asyncio.sleep(3600)  # every hour
+        try:
+            cutoff = (datetime.now() - timedelta(hours=48)).strftime("%Y-%m-%d %H:%M:%S")
+            now_iso = datetime.now().isoformat()
+            stale = query(
+                """SELECT id FROM sales WHERE is_flagged = 1 AND resolved_by_admin = 0
+                   AND submitted_at < ?""",
+                (cutoff,)
+            )
+            for sale in stale:
+                execute(
+                    """UPDATE sales SET resolved_by_admin = 1, admin_action = 'AUTO_CONFIRMED',
+                       auto_confirmed_at = ? WHERE id = ?""",
+                    (now_iso, sale["id"]),
+                )
+            if stale:
+                print(f"Auto-confirmed {len(stale)} flagged sales")
+        except Exception as e:
+            print(f"Auto-confirm error: {e}")
+
+
 @app.on_event("startup")
 async def startup():
     init_db()
+    asyncio.create_task(auto_confirm_flagged_sales())
 
 
-# --- Upload Endpoint ---
+
 @app.post("/api/upload")
 async def upload_file(file: UploadFile = File(...), category: str = Form("receipts")):
-    """Upload an image file (receipt or screenshot)."""
     ext = Path(file.filename).suffix or ".jpg"
     filename = f"{uuid.uuid4().hex}{ext}"
     folder = UPLOAD_DIR / category
@@ -172,25 +304,69 @@ async def upload_file(file: UploadFile = File(...), category: str = Form("receip
 
     return {"path": f"uploads/{category}/{filename}", "filename": filename}
 
-
-# ==================== SALES ENDPOINTS ====================
-
 @app.post("/api/sales")
 async def submit_sale(sale: SaleSubmission):
-    """Employee submits a sale record."""
+    basket_size = round(sale.revenue / max(sale.num_items, 1), 2)
+
+    # Run flag detection
+    flags = check_for_flags(sale.revenue, sale.num_items, sale.app_download, sale.employee_id)
+    is_flagged = len(flags) > 0
+
     sale_id = execute(
-        """INSERT INTO sales (employee_id, revenue, basket_size, num_items, receipt_photo_path, status, sale_date)
-           VALUES (?, ?, ?, ?, ?, 'pending', date('now'))""",
-        (sale.employee_id, sale.revenue, sale.basket_size, sale.num_items, sale.receipt_photo_path),
+        """INSERT INTO sales (employee_id, revenue, basket_size, num_items, app_download,
+           receipt_photo_path, status, is_flagged, flags, resolved_by_admin, sale_date)
+           VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, 0, date('now'))""",
+        (sale.employee_id, sale.revenue, basket_size, sale.num_items,
+         1 if sale.app_download else 0, sale.receipt_photo_path,
+         1 if is_flagged else 0, json.dumps(flags)),
     )
-    # Notify managers via SSE
+
+    if sale.app_download:
+        execute(
+            """INSERT INTO app_downloads (employee_id, status, download_date)
+               VALUES (?, 'approved', date('now'))""",
+            (sale.employee_id,),
+        )
+
+    alert_type = "flagged_sale" if is_flagged else "new_sale"
     await broadcast_alert({
-        "type": "new_sale",
-        "message": f"New sale submission (₹{sale.revenue:.0f}) pending review",
+        "type": alert_type,
+        "message": f"{'🚩 Flagged sale' if is_flagged else 'New sale'} submission (₹{sale.revenue:.0f}) pending review",
         "employee_id": sale.employee_id,
         "sale_id": sale_id,
     })
-    return {"id": sale_id, "status": "pending", "message": "Sale submitted for review"}
+
+    ws, we = get_date_range("weekly")
+    weekly_revenue = query(
+        "SELECT COALESCE(SUM(revenue), 0) as v FROM sales WHERE employee_id = ? AND sale_date BETWEEN ? AND ? AND admin_action IS NOT 'REJECTED'",
+        (sale.employee_id, ws, we), one=True
+    )
+    total_bills = query(
+        "SELECT COUNT(*) as v FROM sales WHERE employee_id = ? AND sale_date BETWEEN ? AND ? AND admin_action IS NOT 'REJECTED'",
+        (sale.employee_id, ws, we), one=True
+    )
+    total_app_downloads = query(
+        "SELECT COUNT(*) as v FROM app_downloads WHERE employee_id = ? AND download_date BETWEEN ? AND ?",
+        (sale.employee_id, ws, we), one=True
+    )
+    avg_basket = query(
+        "SELECT COALESCE(AVG(basket_size), 0) as v FROM sales WHERE employee_id = ? AND sale_date BETWEEN ? AND ? AND admin_action IS NOT 'REJECTED'",
+        (sale.employee_id, ws, we), one=True
+    )
+
+    return {
+        "success": True,
+        "saleId": str(sale_id),
+        "isFlagged": is_flagged,
+        "flags": flags,
+        "basketSize": basket_size,
+        "weeklyTotals": {
+            "weeklyRevenue": round(weekly_revenue["v"], 2),
+            "totalBills": total_bills["v"],
+            "totalAppDownloads": total_app_downloads["v"],
+            "avgBasketSize": round(avg_basket["v"], 2),
+        },
+    }
 
 
 @app.get("/api/sales")
@@ -199,7 +375,6 @@ async def list_sales(
     status: Optional[str] = None,
     limit: int = 50,
 ):
-    """List sales, optionally filtered."""
     where, params = "WHERE 1=1", []
     if employee_id:
         where += " AND s.employee_id = ?"
@@ -218,19 +393,14 @@ async def list_sales(
 
 @app.put("/api/sales/{sale_id}/review")
 async def review_sale(sale_id: int, review: ReviewAction):
-    """Manager approves/rejects a sale."""
     execute(
         "UPDATE sales SET status = ?, reviewed_by = ?, reviewed_at = datetime('now'), rejection_reason = ? WHERE id = ?",
         (review.status, review.reviewer_id, review.rejection_reason, sale_id),
     )
     return {"id": sale_id, "status": review.status, "message": f"Sale {review.status}"}
 
-
-# ==================== APP DOWNLOADS ENDPOINTS ====================
-
 @app.post("/api/app-downloads")
 async def submit_download(employee_id: int = Form(...), screenshot_photo_path: Optional[str] = Form(None), customer_name: Optional[str] = Form(None)):
-    """Employee submits an app download record."""
     dl_id = execute(
         """INSERT INTO app_downloads (employee_id, screenshot_photo_path, customer_name, status, download_date)
            VALUES (?, ?, ?, 'pending', date('now'))""",
@@ -241,15 +411,12 @@ async def submit_download(employee_id: int = Form(...), screenshot_photo_path: O
 
 @app.put("/api/app-downloads/{download_id}/review")
 async def review_download(download_id: int, review: ReviewAction):
-    """Manager approves/rejects a download."""
     execute(
         "UPDATE app_downloads SET status = ?, reviewed_by = ?, reviewed_at = datetime('now'), rejection_reason = ? WHERE id = ?",
         (review.status, review.reviewer_id, review.rejection_reason, download_id),
     )
     return {"id": download_id, "status": review.status}
 
-
-# ==================== EMPLOYEE ENDPOINTS ====================
 
 @app.get("/api/employees")
 async def list_employees(department_id: Optional[int] = None, store_id: Optional[int] = None, role: Optional[str] = None):
@@ -277,7 +444,6 @@ async def list_employees(department_id: Optional[int] = None, store_id: Optional
 
 @app.get("/api/employees/{employee_id}")
 async def get_employee(employee_id: int):
-    """Get single employee details."""
     emp = query(
         """SELECT e.*, d.name as department_name, s.name as store_name
            FROM employees e
@@ -298,14 +464,12 @@ async def get_employee_score(
     start: Optional[str] = None,
     end: Optional[str] = None,
 ):
-    """Get real-time productivity score with metric breakdown."""
     start_date, end_date = get_date_range(range, start, end)
     return compute_productivity_index(employee_id, start_date, end_date)
 
 
 @app.get("/api/employees/{employee_id}/gamification")
 async def get_gamification(employee_id: int):
-    """Get XP, level, badges, streaks."""
     result = get_employee_gamification(employee_id)
     if not result:
         raise HTTPException(status_code=404, detail="Employee not found")
@@ -319,15 +483,11 @@ async def get_trends(
     start: Optional[str] = None,
     end: Optional[str] = None,
 ):
-    """Get growth trend data for charting."""
     if range == "weekly":
         s, e = get_full_date_range()
     else:
         s, e = get_date_range(range, start, end)
     return get_growth_trend_data(employee_id, s, e)
-
-
-# ==================== LEADERBOARD ====================
 
 @app.get("/api/leaderboard")
 async def leaderboard(
@@ -335,11 +495,7 @@ async def leaderboard(
     store_id: Optional[int] = None,
     limit: int = 20,
 ):
-    """Get ranked leaderboard."""
     return get_leaderboard(department_id, store_id, limit)
-
-
-# ==================== ANALYTICS ENDPOINTS ====================
 
 @app.get("/api/clustering")
 async def get_clustering(
@@ -349,14 +505,12 @@ async def get_clustering(
     start: Optional[str] = None,
     end: Optional[str] = None,
 ):
-    """K-Means employee clustering."""
     s, e = get_full_date_range() if range == "weekly" else get_date_range(range, start, end)
     return cluster_employees(department_id, s, e, n_clusters)
 
 
 @app.get("/api/correlations")
 async def get_correlations(department_id: Optional[int] = None):
-    """Get correlation matrix between performance metrics."""
     import numpy as np
 
     s, e = get_full_date_range()
@@ -404,7 +558,6 @@ async def department_analytics(
     start: Optional[str] = None,
     end: Optional[str] = None,
 ):
-    """Department-level analytics."""
     s, e = get_date_range(range, start, end)
 
     dept = query("SELECT * FROM departments WHERE id = ?", (department_id,), one=True)
@@ -438,12 +591,8 @@ async def department_analytics(
         "date_range": {"start": s, "end": e},
     }
 
-
-# ==================== ATTENDANCE ENDPOINTS ====================
-
 @app.post("/api/attendance/punch-in")
 async def api_punch_in(req: PunchRequest):
-    """Punch in with GPS verification."""
     result = punch_in(req.employee_id, req.latitude, req.longitude)
     if result["success"]:
         await broadcast_alert({
@@ -456,13 +605,11 @@ async def api_punch_in(req: PunchRequest):
 
 @app.post("/api/attendance/punch-out")
 async def api_punch_out(req: PunchRequest):
-    """Punch out with GPS."""
     return punch_out(req.employee_id, req.latitude, req.longitude)
 
 
 @app.get("/api/attendance")
 async def get_attendance(employee_id: Optional[int] = None, limit: int = 30):
-    """Get attendance history."""
     where, params = "", []
     if employee_id:
         where = "WHERE a.employee_id = ?"
@@ -478,15 +625,10 @@ async def get_attendance(employee_id: Optional[int] = None, limit: int = 30):
 
 @app.get("/api/attendance/status/{employee_id}")
 async def api_attendance_status(employee_id: int):
-    """Get current shift status."""
     return get_attendance_status(employee_id)
-
-
-# ==================== MANAGER ENDPOINTS ====================
 
 @app.get("/api/manager/review-queue")
 async def review_queue():
-    """Get all pending submissions."""
     pending_sales = query(
         """SELECT s.*, e.name as employee_name, 'sale' as type FROM sales s
            JOIN employees e ON s.employee_id = e.id
@@ -502,7 +644,6 @@ async def review_queue():
 
 @app.post("/api/manager/daily-rating")
 async def submit_rating(rating: DailyRating):
-    """Manager gives daily rating."""
     try:
         execute(
             "INSERT OR REPLACE INTO manager_ratings (employee_id, manager_id, rating, notes, rating_date) VALUES (?, ?, ?, ?, date('now'))",
@@ -515,7 +656,6 @@ async def submit_rating(rating: DailyRating):
 
 @app.get("/api/manager/attendance-overview")
 async def attendance_overview():
-    """Get today's attendance for all employees."""
     today = datetime.now().strftime("%Y-%m-%d")
     return query(
         """SELECT e.id, e.name, e.department_id, d.name as department_name,
@@ -531,7 +671,6 @@ async def attendance_overview():
 
 @app.get("/api/manager/pending-employees")
 async def pending_employees(store_id: Optional[int] = None):
-    """Get all pending employee registrations for a store."""
     where, params = "WHERE e.status = 'pending'", []
     if store_id:
         where += " AND e.store_id = ?"
@@ -549,7 +688,6 @@ async def pending_employees(store_id: Optional[int] = None):
 
 @app.put("/api/manager/employees/{employee_id}/review")
 async def review_employee(employee_id: int, review: ReviewAction):
-    """Manager approves or rejects a pending employee registration."""
     if review.status not in ["approved", "rejected"]:
         raise HTTPException(status_code=400, detail="Invalid status")
         
@@ -560,10 +698,159 @@ async def review_employee(employee_id: int, review: ReviewAction):
     return {"id": employee_id, "status": review.status, "message": f"Employee {review.status}"}
 
 
+# ==================== GEOFENCE ALERTS ====================
+
+@app.post("/api/alerts/geofence")
+async def create_geofence_alert(alert: GeofenceAlert):
+    alert_id = execute(
+        """INSERT INTO geofence_alerts (employee_id, employee_name, punch_in_time, first_fail_time, second_fail_time, alert_type)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (alert.employeeId, alert.employeeName, alert.punchInTime, alert.firstFailTime, alert.secondFailTime, alert.alertType),
+    )
+    return {"success": True, "alertId": str(alert_id)}
+
+
+@app.get("/api/alerts/geofence")
+async def list_geofence_alerts():
+    return query(
+        """SELECT id as alertId, employee_id as employeeId, employee_name as employeeName,
+                  punch_in_time as punchInTime, first_fail_time as firstFailTime,
+                  second_fail_time as secondFailTime, alert_type as alertType,
+                  resolved, created_at as createdAt
+           FROM geofence_alerts WHERE resolved = 0 ORDER BY created_at DESC"""
+    )
+
+
+# ==================== ADMIN FLAGGED SALES ====================
+
+class AdminAction(BaseModel):
+    action: str  # "CONFIRMED" or "REJECTED"
+
+
+@app.get("/api/admin/flagged-sales")
+async def get_flagged_sales():
+    rows = query(
+        """SELECT s.id as saleId, s.employee_id as employeeId, e.name as employeeName,
+                  d.name as department, s.revenue as saleAmount, s.num_items as numberOfItems,
+                  s.basket_size as basketSize, s.app_download as appDownload,
+                  s.receipt_photo_path as receiptPhoto, s.submitted_at as submittedAt,
+                  s.flags, s.is_flagged as isFlagged, s.resolved_by_admin as resolvedByAdmin
+           FROM sales s
+           JOIN employees e ON s.employee_id = e.id
+           JOIN departments d ON e.department_id = d.id
+           WHERE s.is_flagged = 1 AND s.resolved_by_admin = 0
+           ORDER BY s.submitted_at DESC"""
+    )
+    result = []
+    for row in rows:
+        r = dict(row)
+        try:
+            r["flags"] = json.loads(r["flags"]) if r["flags"] else []
+        except (json.JSONDecodeError, TypeError):
+            r["flags"] = []
+        r["appDownload"] = bool(r["appDownload"])
+        r["isFlagged"] = bool(r["isFlagged"])
+        r["resolvedByAdmin"] = bool(r["resolvedByAdmin"])
+        result.append(r)
+    return result
+
+
+@app.patch("/api/admin/flagged-sales/{sale_id}")
+async def resolve_flagged_sale(sale_id: int, action_data: AdminAction):
+    if action_data.action not in ("CONFIRMED", "REJECTED"):
+        raise HTTPException(status_code=400, detail="Action must be CONFIRMED or REJECTED")
+
+    now_iso = datetime.now().isoformat()
+    execute(
+        "UPDATE sales SET resolved_by_admin = 1, admin_action = ?, resolved_at = ? WHERE id = ?",
+        (action_data.action, now_iso, sale_id),
+    )
+
+    # Get employee id for this sale
+    sale = query("SELECT employee_id FROM sales WHERE id = ?", (sale_id,), one=True)
+    if not sale:
+        raise HTTPException(status_code=404, detail="Sale not found")
+
+    emp_id = sale["employee_id"]
+    ws, we = get_date_range("weekly")
+
+    if action_data.action == "REJECTED":
+        # Recalculate weekly totals excluding rejected sales
+        weekly_revenue = query(
+            "SELECT COALESCE(SUM(revenue), 0) as v FROM sales WHERE employee_id = ? AND sale_date BETWEEN ? AND ? AND admin_action IS NOT 'REJECTED'",
+            (emp_id, ws, we), one=True
+        )
+        total_bills = query(
+            "SELECT COUNT(*) as v FROM sales WHERE employee_id = ? AND sale_date BETWEEN ? AND ? AND admin_action IS NOT 'REJECTED'",
+            (emp_id, ws, we), one=True
+        )
+        total_app_downloads = query(
+            "SELECT COUNT(*) as v FROM app_downloads WHERE employee_id = ? AND download_date BETWEEN ? AND ?",
+            (emp_id, ws, we), one=True
+        )
+        avg_basket = query(
+            "SELECT COALESCE(AVG(basket_size), 0) as v FROM sales WHERE employee_id = ? AND sale_date BETWEEN ? AND ? AND admin_action IS NOT 'REJECTED'",
+            (emp_id, ws, we), one=True
+        )
+        weekly_totals = {
+            "weeklyRevenue": round(weekly_revenue["v"], 2),
+            "totalBills": total_bills["v"],
+            "totalAppDownloads": total_app_downloads["v"],
+            "avgBasketSize": round(avg_basket["v"], 2),
+        }
+    else:
+        # Confirmed — just return current totals
+        weekly_revenue = query(
+            "SELECT COALESCE(SUM(revenue), 0) as v FROM sales WHERE employee_id = ? AND sale_date BETWEEN ? AND ?",
+            (emp_id, ws, we), one=True
+        )
+        total_bills = query(
+            "SELECT COUNT(*) as v FROM sales WHERE employee_id = ? AND sale_date BETWEEN ? AND ?",
+            (emp_id, ws, we), one=True
+        )
+        total_app_downloads = query(
+            "SELECT COUNT(*) as v FROM app_downloads WHERE employee_id = ? AND download_date BETWEEN ? AND ?",
+            (emp_id, ws, we), one=True
+        )
+        avg_basket = query(
+            "SELECT COALESCE(AVG(basket_size), 0) as v FROM sales WHERE employee_id = ? AND sale_date BETWEEN ? AND ?",
+            (emp_id, ws, we), one=True
+        )
+        weekly_totals = {
+            "weeklyRevenue": round(weekly_revenue["v"], 2),
+            "totalBills": total_bills["v"],
+            "totalAppDownloads": total_app_downloads["v"],
+            "avgBasketSize": round(avg_basket["v"], 2),
+        }
+
+    return {
+        "success": True,
+        "saleId": str(sale_id),
+        "action": action_data.action,
+        "weeklyTotals": weekly_totals,
+    }
+
+
+@app.post("/api/admin/flagged-sales/auto-confirm")
+async def manual_auto_confirm():
+    """Manual trigger for auto-confirming flagged sales older than 48h."""
+    cutoff = (datetime.now() - timedelta(hours=48)).strftime("%Y-%m-%d %H:%M:%S")
+    now_iso = datetime.now().isoformat()
+    stale = query(
+        "SELECT id FROM sales WHERE is_flagged = 1 AND resolved_by_admin = 0 AND submitted_at < ?",
+        (cutoff,)
+    )
+    for sale in stale:
+        execute(
+            "UPDATE sales SET resolved_by_admin = 1, admin_action = 'AUTO_CONFIRMED', auto_confirmed_at = ? WHERE id = ?",
+            (now_iso, sale["id"]),
+        )
+    return {"success": True, "autoConfirmed": len(stale)}
+
+
 # ==================== SSE ENDPOINT ====================
 
 async def broadcast_alert(alert: dict):
-    """Send alert to all connected manager clients."""
     alert["timestamp"] = datetime.now().isoformat()
     for q in alert_queues:
         await q.put(alert)
@@ -571,7 +858,6 @@ async def broadcast_alert(alert: dict):
 
 @app.get("/api/stream/alerts")
 async def stream_alerts():
-    """SSE endpoint for live manager alerts."""
     q = asyncio.Queue()
     alert_queues.append(q)
 
@@ -595,7 +881,6 @@ async def stream_alerts():
 
 @app.get("/api/dashboard/employee/{employee_id}")
 async def employee_dashboard(employee_id: int):
-    """All-in-one employee dashboard data."""
     s, e = get_full_date_range()
     ws, we = get_date_range("weekly")
 
@@ -613,7 +898,6 @@ async def employee_dashboard(employee_id: int):
     trends = get_growth_trend_data(employee_id, s, e)
     att_status = get_attendance_status(employee_id)
 
-    # Weekly stats
     weekly_revenue = query(
         "SELECT COALESCE(SUM(revenue), 0) as v FROM sales WHERE employee_id = ? AND status = 'approved' AND sale_date BETWEEN ? AND ?",
         (employee_id, ws, we), one=True
@@ -648,7 +932,6 @@ async def employee_dashboard(employee_id: int):
 
 @app.get("/api/dashboard/manager")
 async def manager_dashboard(store_id: int = 1):
-    """All-in-one manager dashboard data."""
     ws, we = get_date_range("weekly")
 
     departments = query("SELECT * FROM departments WHERE store_id = ?", (store_id,))

@@ -27,8 +27,6 @@ def haversine_distance(lat1: float, lng1: float, lat2: float, lng2: float) -> fl
 
 
 def punch_in(employee_id: int, latitude: float, longitude: float) -> dict:
-    """Process a punch-in request with GPS verification."""
-    # Check if already punched in today
     today = datetime.now().strftime("%Y-%m-%d")
     existing = query(
         "SELECT id FROM attendance WHERE employee_id = ? AND attendance_date = ? AND punch_out_time IS NULL",
@@ -38,7 +36,7 @@ def punch_in(employee_id: int, latitude: float, longitude: float) -> dict:
     if existing:
         return {"success": False, "error": "Already punched in today. Please punch out first."}
 
-    # Get store coordinates
+    
     store = query(
         """SELECT s.latitude, s.longitude, s.geofence_radius_meters, s.shift_start_time
            FROM employees e JOIN stores s ON e.store_id = s.id WHERE e.id = ?""",
@@ -81,10 +79,10 @@ def punch_in(employee_id: int, latitude: float, longitude: float) -> dict:
 
 
 def punch_out(employee_id: int, latitude: float, longitude: float) -> dict:
-    """Process a punch-out request."""
+    
     today = datetime.now().strftime("%Y-%m-%d")
 
-    # Find active punch-in
+    
     active = query(
         "SELECT id, punch_in_time FROM attendance WHERE employee_id = ? AND attendance_date = ? AND punch_out_time IS NULL AND punch_in_status = 'approved'",
         (employee_id, today), one=True
@@ -93,7 +91,7 @@ def punch_out(employee_id: int, latitude: float, longitude: float) -> dict:
     if not active:
         return {"success": False, "error": "No active punch-in found for today."}
 
-    # Get store for distance check
+    
     store = query(
         "SELECT s.latitude, s.longitude, s.geofence_radius_meters FROM employees e JOIN stores s ON e.store_id = s.id WHERE e.id = ?",
         (employee_id,), one=True
@@ -102,7 +100,7 @@ def punch_out(employee_id: int, latitude: float, longitude: float) -> dict:
     distance = haversine_distance(latitude, longitude, store["latitude"], store["longitude"])
     now = datetime.now()
 
-    # Calculate hours worked
+    
     punch_in_time = datetime.strptime(active["punch_in_time"], "%Y-%m-%d %H:%M:%S")
     hours_worked = (now - punch_in_time).total_seconds() / 3600
 
@@ -125,7 +123,7 @@ def punch_out(employee_id: int, latitude: float, longitude: float) -> dict:
 
 
 def get_attendance_status(employee_id: int) -> dict:
-    """Get current shift status for an employee."""
+    
     today = datetime.now().strftime("%Y-%m-%d")
 
     active = query(
@@ -143,7 +141,7 @@ def get_attendance_status(employee_id: int) -> dict:
             "hours_so_far": round(hours_so_far, 2),
         }
 
-    # Check if already completed today
+   
     completed = query(
         "SELECT punch_in_time, punch_out_time, hours_worked FROM attendance WHERE employee_id = ? AND attendance_date = ? AND punch_out_time IS NOT NULL",
         (employee_id, today), one=True
