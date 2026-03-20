@@ -24,13 +24,13 @@ def get_stability_index(employee_id: int, start_date: str, end_date: str) -> flo
     )
 
     if len(weekly_revenues) < 2:
-        return 50  # Not enough data
+        return 0  # Not enough data
 
     revenues = np.array([w["weekly_revenue"] for w in weekly_revenues])
     mean = np.mean(revenues)
 
     if mean == 0:
-        return 50
+        return 0
 
     cv = np.std(revenues) / mean  # Coefficient of variation
     stability = (1 - cv) * 100

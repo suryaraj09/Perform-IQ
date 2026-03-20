@@ -141,13 +141,13 @@ def seed_sales(conn, employees):
         arch = ARCHETYPES[archetype]
         base_rev = sum(arch["rev_range"]) / 2
 
-        for week in range(8):
+        for week in range(12):
             growth_factor = 1 + (arch["growth"] * week)
             week_start = start_date + timedelta(weeks=week)
 
             for day_offset in range(6):
                 day = week_start + timedelta(days=day_offset)
-                if day > datetime(2026, 3, 9):
+                if day > datetime.now():
                     break
 
                 num_sales = random.randint(5, 15)
@@ -193,11 +193,11 @@ def seed_app_downloads(conn, employees):
         daily_downloads = {"star": (2, 5), "steady": (1, 3), "growing": (1, 4), "inconsistent": (0, 3), "underperformer": (0, 2)}
         dl_range = daily_downloads[archetype]
 
-        for week in range(8):
+        for week in range(12):
             week_start = start_date + timedelta(weeks=week)
             for day_offset in range(6):
                 day = week_start + timedelta(days=day_offset)
-                if day > datetime(2026, 3, 9):
+                if day > datetime.now():
                     break
 
                 num_downloads = random.randint(*dl_range)
@@ -230,11 +230,11 @@ def seed_attendance(conn, employees, stores_data=STORES):
         attendance_rate = {"star": 0.98, "steady": 0.95, "growing": 0.90, "inconsistent": 0.80, "underperformer": 0.75}
         punctuality = {"star": 0.95, "steady": 0.90, "growing": 0.85, "inconsistent": 0.65, "underperformer": 0.60}
 
-        for week in range(8):
+        for week in range(12):
             week_start = start_date + timedelta(weeks=week)
             for day_offset in range(6):
                 day = week_start + timedelta(days=day_offset)
-                if day > datetime(2026, 3, 9):
+                if day > datetime.now():
                     break
 
                 if random.random() > attendance_rate[archetype]:
@@ -294,11 +294,11 @@ def seed_manager_ratings(conn, employees):
         base = rating_base[archetype]
         manager_id = manager_ids[0] if store_id == 1 else manager_ids[-1]
 
-        for week in range(8):
+        for week in range(12):
             week_start = start_date + timedelta(weeks=week)
             for day_offset in range(6):
                 day = week_start + timedelta(days=day_offset)
-                if day > datetime(2026, 3, 9):
+                if day > datetime.now():
                     break
 
                 if random.random() < 0.85:

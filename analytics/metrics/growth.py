@@ -24,7 +24,7 @@ def get_growth_trend(employee_id: int, start_date: str, end_date: str) -> float:
     )
 
     if len(weekly_revenues) < 3:
-        return 50  # Not enough data for trend
+        return 0  # Not enough data for trend
 
     revenues = np.array([w["weekly_revenue"] for w in weekly_revenues])
     x = np.arange(len(revenues))
@@ -34,7 +34,7 @@ def get_growth_trend(employee_id: int, start_date: str, end_date: str) -> float:
     # Normalize: positive slope = growing, negative = declining
     mean_revenue = np.mean(revenues)
     if mean_revenue == 0:
-        return 50
+        return 0
 
     # Percentage growth per week
     pct_growth = (slope / mean_revenue) * 100

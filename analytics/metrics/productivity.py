@@ -52,7 +52,7 @@ def get_basket_performance_index(employee_id: int, start_date: str, end_date: st
     )
 
     if not dept_avg or dept_avg["avg_basket_size"] == 0:
-        return 50
+        return 0
 
     ratio = emp_avg["avg_basket"] / dept_avg["avg_basket_size"]
     return min(100, ratio * 100)
@@ -66,7 +66,7 @@ def get_manager_rating_score(employee_id: int, start_date: str, end_date: str) -
         (employee_id, start_date, end_date), one=True
     )
     if not result or result["avg_rating"] == 0:
-        return 50
+        return 0
     return (result["avg_rating"] / 5) * 100
 
 
@@ -130,7 +130,7 @@ def get_punctuality_score(employee_id: int, start_date: str, end_date: str) -> f
     )
 
     if not records:
-        return 50
+        return 0
 
     from datetime import datetime
     on_time = 0

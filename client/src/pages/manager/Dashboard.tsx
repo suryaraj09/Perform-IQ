@@ -33,10 +33,10 @@ export default function ManagerDashboard() {
             await fetch(`http://localhost:8000/api/manager/employees/${employeeId}/review`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ status, reviewer_id: 1 }) // Hardcoded reviewer_id for now, can be extracted from profile later
+                body: JSON.stringify({ status, reviewer_id: 1 })
             });
             await refetchPending();
-            await refetch(); // Refresh dashboard stats
+            await refetch();
         } catch (err) {
             console.error('Failed to review employee', err);
         } finally {
@@ -128,7 +128,7 @@ export default function ManagerDashboard() {
                 {/* Target Achievement Donut */}
                 <div className="card">
                     <div className="card-header">
-                        <span className="card-title">Target Achievement by Dept</span>
+                        <span className="card-title">Target Achievement by the Store</span>
                     </div>
                     <div className="chart-container" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                         <ResponsiveContainer width="100%" height="100%">
