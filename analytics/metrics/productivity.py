@@ -36,7 +36,7 @@ def get_revenue_vs_target(employee_id: int, start_date: str, end_date: str) -> f
 
 
 def get_basket_performance_index(employee_id: int, start_date: str, end_date: str) -> float:
-    """Basket Performance Index — employee avg vs department avg (weight: 20%)."""
+    """Basket Performance Index — employee avg vs department avg (weight: 25%)."""
     # Employee average basket
     emp_avg = query(
         """SELECT COALESCE(AVG(basket_size), 0) as avg_basket FROM sales 
@@ -70,41 +70,10 @@ def get_manager_rating_score(employee_id: int, start_date: str, end_date: str) -
     return (result["avg_rating"] / 5) * 100
 
 
-def get_app_conversion_rate(employee_id: int, start_date: str, end_date: str) -> float:
-    """App Conversion Rate (weight: 10%)."""
-    # Count approved app downloads
-    downloads = query(
-        """SELECT COUNT(*) as count FROM app_downloads 
-           WHERE employee_id = ? AND status = 'approved' AND download_date BETWEEN ? AND ?""",
-        (employee_id, start_date, end_date), one=True
-    )
-
-    # Count approved bills (sales)
-    bills = query(
-        """SELECT COUNT(*) as count FROM sales 
-           WHERE employee_id = ? AND status = 'approved' AND sale_date BETWEEN ? AND ?""",
-        (employee_id, start_date, end_date), one=True
-    )
-
-    if not bills or bills["count"] == 0:
-        return 0
-
-    # Get department average conversion
-    dept_avg = query(
-        """SELECT d.avg_app_conversion_rate FROM employees e 
-           JOIN departments d ON e.department_id = d.id WHERE e.id = ?""",
-        (employee_id,), one=True
-    )
-
-    emp_rate = downloads["count"] / bills["count"]
-    dept_rate = dept_avg["avg_app_conversion_rate"] if dept_avg and dept_avg["avg_app_conversion_rate"] > 0 else 0.1
-
-    ratio = emp_rate / dept_rate
-    return min(100, ratio * 100)
 
 
 def get_attendance_rate(employee_id: int, start_date: str, end_date: str) -> float:
-    """Attendance Rate (weight: 3%)."""
+    """Attendance Rate (weight: 5%)."""
     from datetime import datetime
     d1 = datetime.strptime(start_date, "%Y-%m-%d")
     d2 = datetime.strptime(end_date, "%Y-%m-%d")
@@ -122,7 +91,7 @@ def get_attendance_rate(employee_id: int, start_date: str, end_date: str) -> flo
 
 
 def get_punctuality_score(employee_id: int, start_date: str, end_date: str) -> float:
-    """Punctuality Score — on-time check-ins (weight: 2%)."""
+    """Punctuality Score — on-time check-ins (weight: 5%)."""
     records = query(
         """SELECT punch_in_time FROM attendance 
            WHERE employee_id = ? AND punch_in_status = 'approved' AND attendance_date BETWEEN ? AND ?""",
@@ -153,20 +122,18 @@ def compute_productivity_index(employee_id: int, start_date: str, end_date: str)
         "manager_rating": get_manager_rating_score(employee_id, start_date, end_date),
         "growth_trend": get_growth_trend(employee_id, start_date, end_date),
         "stability_index": get_stability_index(employee_id, start_date, end_date),
-        "app_conversion": get_app_conversion_rate(employee_id, start_date, end_date),
         "attendance_rate": get_attendance_rate(employee_id, start_date, end_date),
         "punctuality": get_punctuality_score(employee_id, start_date, end_date),
     }
 
     weights = {
         "revenue_vs_target": 0.30,
-        "basket_performance": 0.20,
+        "basket_performance": 0.25,
         "manager_rating": 0.15,
         "growth_trend": 0.10,
         "stability_index": 0.10,
-        "app_conversion": 0.10,
-        "attendance_rate": 0.03,
-        "punctuality": 0.02,
+        "attendance_rate": 0.05,
+        "punctuality": 0.05,
     }
 
     score = sum(metrics[k] * weights[k] for k in weights)

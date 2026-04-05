@@ -69,15 +69,13 @@ export default function Attendance({ employeeId, employeeName }: { employeeId: n
             );
 
             if (distance <= GEOFENCE_RADIUS) {
-                // PASS — reset counter
                 consecutiveFailCountRef.current = 0;
                 firstFailTimeRef.current = null;
             } else {
-                // FAIL — outside radius
                 handleGeofenceFail();
             }
         } catch {
-            // Location unavailable / permission denied = FAIL
+
             handleGeofenceFail();
         }
     }, []);

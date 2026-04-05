@@ -15,12 +15,13 @@ interface FlaggedSale {
     saleAmount: number;
     numberOfItems: number;
     basketSize: number;
-    appDownload: boolean;
     receiptPhoto: string | null;
     submittedAt: string;
     flags: FlagItem[];
     isFlagged: boolean;
     resolvedByAdmin: boolean;
+    currentPScore: number;
+    projectedPScore: number;
 }
 
 const FLAG_LABELS: Record<string, string> = {
@@ -28,7 +29,6 @@ const FLAG_LABELS: Record<string, string> = {
     HIGH_ITEM_COUNT: 'Unrealistic Item Count',
     RAPID_SUBMISSION: 'Rapid Consecutive Submission',
     NO_ACTIVE_SESSION: 'Submitted Without Punch In',
-    HIGH_APP_DOWNLOAD_RATE: 'Suspicious App Download Rate',
 };
 
 export default function FlaggedSales() {
@@ -224,10 +224,6 @@ export default function FlaggedSales() {
                             <div style={{ fontWeight: 600 }}>₹{sale.basketSize.toLocaleString('en-IN')}</div>
                         </div>
                         <div>
-                            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>App Download</div>
-                            <div style={{ fontWeight: 600, color: sale.appDownload ? '#22c55e' : 'var(--text-secondary)' }}>{sale.appDownload ? 'Yes' : 'No'}</div>
-                        </div>
-                        <div>
                             <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Receipt</div>
                             {sale.receiptPhoto ? (
                                 <a href={sale.receiptPhoto} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4, fontSize: '0.9rem' }}>
@@ -260,6 +256,35 @@ export default function FlaggedSales() {
                             ))}
                         </div>
                     </div>
+
+                    {/* Score Impact Delta */}
+                    {(() => {
+                        const delta = Math.round((sale.currentPScore - sale.projectedPScore) * 10) / 10;
+                        const deltaColor = delta > 5 ? '#ef4444' : delta >= 2 ? '#f59e0b' : 'var(--text-muted)';
+                        return (
+                            <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 24 }}>
+                                <div>
+                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Current Score</div>
+                                    <div style={{ fontWeight: 700, fontSize: '1.1rem' }}>{sale.currentPScore}</div>
+                                </div>
+                                <div>
+                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>If Rejected</div>
+                                    <div style={{ fontWeight: 700, fontSize: '1.1rem', color: deltaColor }}>{sale.projectedPScore}</div>
+                                </div>
+                                <div style={{
+                                    marginLeft: 'auto',
+                                    padding: '4px 12px',
+                                    borderRadius: 8,
+                                    background: delta > 5 ? 'rgba(239, 68, 68, 0.1)' : delta >= 2 ? 'rgba(245, 158, 11, 0.1)' : 'rgba(128, 128, 128, 0.1)',
+                                    color: deltaColor,
+                                    fontWeight: 700,
+                                    fontSize: '0.85rem',
+                                }}>
+                                    ▼ {delta.toFixed(1)} points
+                                </div>
+                            </div>
+                        );
+                    })()}
 
                     {/* Actions */}
                     <div style={{ padding: '14px 20px', display: 'flex', gap: 12 }}>

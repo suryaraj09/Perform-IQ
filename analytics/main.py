@@ -23,6 +23,7 @@ from metrics.growth import get_growth_trend_data
 from metrics.clustering import cluster_employees
 from gamification import get_employee_gamification, get_leaderboard, get_level_info, get_xp_for_score
 from attendance import punch_in, punch_out, get_attendance_status
+from migrate_weights import run_migration
 
 app = FastAPI(title="PerformIQ API", version="1.0.0")
 
@@ -49,7 +50,6 @@ class SaleSubmission(BaseModel):
     employee_id: int
     revenue: float
     num_items: int = 1
-    app_download: bool = False
     receipt_photo_path: Optional[str] = None
 
 
@@ -190,26 +190,8 @@ def has_active_punch_in(employee_id: int) -> bool:
     return row is not None
 
 
-def get_app_download_rate(employee_id: int) -> float:
-    """Get app download rate from sales in last 7 days."""
-    seven_days_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
-    today = datetime.now().strftime("%Y-%m-%d")
-    total = query(
-        "SELECT COUNT(*) as v FROM sales WHERE employee_id = ? AND sale_date BETWEEN ? AND ?",
-        (employee_id, seven_days_ago, today), one=True
-    )
-    downloads = query(
-        "SELECT COUNT(*) as v FROM sales WHERE employee_id = ? AND app_download = 1 AND sale_date BETWEEN ? AND ?",
-        (employee_id, seven_days_ago, today), one=True
-    )
-    total_bills = total["v"] if total else 0
-    if total_bills == 0:
-        return 0.0
-    return (downloads["v"] if downloads else 0) / total_bills
-
-
-def check_for_flags(sale_revenue: float, num_items: int, app_download: bool, employee_id: int) -> list:
-    """Run all 5 flag rules and return triggered flags."""
+def check_for_flags(sale_revenue: float, num_items: int, employee_id: int) -> list:
+    """Run all 4 flag rules and return triggered flags."""
     flags = []
 
     # RULE 1 — HIGH_SALE_AMOUNT
@@ -245,15 +227,6 @@ def check_for_flags(sale_revenue: float, num_items: int, app_download: bool, emp
             "detail": "Sale submitted without an active punch in session"
         })
 
-    # RULE 5 — HIGH_APP_DOWNLOAD_RATE
-    if app_download:
-        dl_rate = get_app_download_rate(employee_id)
-        if dl_rate > 0.80:
-            flags.append({
-                "rule": "HIGH_APP_DOWNLOAD_RATE",
-                "detail": f"App download rate of {dl_rate*100:.0f}% over last 7 days is suspiciously high"
-            })
-
     return flags
 
 
@@ -286,6 +259,7 @@ async def auto_confirm_flagged_sales():
 @app.on_event("startup")
 async def startup():
     init_db()
+    run_migration()
     asyncio.create_task(auto_confirm_flagged_sales())
 
 
@@ -309,24 +283,17 @@ async def submit_sale(sale: SaleSubmission):
     basket_size = round(sale.revenue / max(sale.num_items, 1), 2)
 
     # Run flag detection
-    flags = check_for_flags(sale.revenue, sale.num_items, sale.app_download, sale.employee_id)
+    flags = check_for_flags(sale.revenue, sale.num_items, sale.employee_id)
     is_flagged = len(flags) > 0
 
     sale_id = execute(
-        """INSERT INTO sales (employee_id, revenue, basket_size, num_items, app_download,
+        """INSERT INTO sales (employee_id, revenue, basket_size, num_items,
            receipt_photo_path, status, is_flagged, flags, resolved_by_admin, sale_date)
-           VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, 0, date('now'))""",
+           VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, 0, date('now'))""",
         (sale.employee_id, sale.revenue, basket_size, sale.num_items,
-         1 if sale.app_download else 0, sale.receipt_photo_path,
+         sale.receipt_photo_path,
          1 if is_flagged else 0, json.dumps(flags)),
     )
-
-    if sale.app_download:
-        execute(
-            """INSERT INTO app_downloads (employee_id, status, download_date)
-               VALUES (?, 'approved', date('now'))""",
-            (sale.employee_id,),
-        )
 
     alert_type = "flagged_sale" if is_flagged else "new_sale"
     await broadcast_alert({
@@ -345,10 +312,6 @@ async def submit_sale(sale: SaleSubmission):
         "SELECT COUNT(*) as v FROM sales WHERE employee_id = ? AND sale_date BETWEEN ? AND ? AND admin_action IS NOT 'REJECTED'",
         (sale.employee_id, ws, we), one=True
     )
-    total_app_downloads = query(
-        "SELECT COUNT(*) as v FROM app_downloads WHERE employee_id = ? AND download_date BETWEEN ? AND ?",
-        (sale.employee_id, ws, we), one=True
-    )
     avg_basket = query(
         "SELECT COALESCE(AVG(basket_size), 0) as v FROM sales WHERE employee_id = ? AND sale_date BETWEEN ? AND ? AND admin_action IS NOT 'REJECTED'",
         (sale.employee_id, ws, we), one=True
@@ -363,7 +326,6 @@ async def submit_sale(sale: SaleSubmission):
         "weeklyTotals": {
             "weeklyRevenue": round(weekly_revenue["v"], 2),
             "totalBills": total_bills["v"],
-            "totalAppDownloads": total_app_downloads["v"],
             "avgBasketSize": round(avg_basket["v"], 2),
         },
     }
@@ -399,23 +361,7 @@ async def review_sale(sale_id: int, review: ReviewAction):
     )
     return {"id": sale_id, "status": review.status, "message": f"Sale {review.status}"}
 
-@app.post("/api/app-downloads")
-async def submit_download(employee_id: int = Form(...), screenshot_photo_path: Optional[str] = Form(None), customer_name: Optional[str] = Form(None)):
-    dl_id = execute(
-        """INSERT INTO app_downloads (employee_id, screenshot_photo_path, customer_name, status, download_date)
-           VALUES (?, ?, ?, 'pending', date('now'))""",
-        (employee_id, screenshot_photo_path, customer_name),
-    )
-    return {"id": dl_id, "status": "pending"}
 
-
-@app.put("/api/app-downloads/{download_id}/review")
-async def review_download(download_id: int, review: ReviewAction):
-    execute(
-        "UPDATE app_downloads SET status = ?, reviewed_by = ?, reviewed_at = datetime('now'), rejection_reason = ? WHERE id = ?",
-        (review.status, review.reviewer_id, review.rejection_reason, download_id),
-    )
-    return {"id": download_id, "status": review.status}
 
 
 @app.get("/api/employees")
@@ -525,7 +471,7 @@ async def get_correlations(department_id: Optional[int] = None):
     if not employees:
         return {"matrix": [], "labels": []}
 
-    metric_labels = ["Revenue", "Basket Size", "Manager Rating", "Attendance", "App Downloads"]
+    metric_labels = ["Revenue", "Basket Size", "Manager Rating", "Attendance"]
     data_matrix = []
 
     for emp in employees:
@@ -534,9 +480,8 @@ async def get_correlations(department_id: Optional[int] = None):
         basket = query("SELECT COALESCE(AVG(basket_size), 0) as v FROM sales WHERE employee_id = ? AND status = 'approved' AND sale_date BETWEEN ? AND ?", (eid, s, e), one=True)
         rating = query("SELECT COALESCE(AVG(rating), 0) as v FROM manager_ratings WHERE employee_id = ? AND rating_date BETWEEN ? AND ?", (eid, s, e), one=True)
         att = query("SELECT COUNT(*) as v FROM attendance WHERE employee_id = ? AND punch_in_status = 'approved' AND attendance_date BETWEEN ? AND ?", (eid, s, e), one=True)
-        dl = query("SELECT COUNT(*) as v FROM app_downloads WHERE employee_id = ? AND status = 'approved' AND download_date BETWEEN ? AND ?", (eid, s, e), one=True)
 
-        data_matrix.append([rev["v"], basket["v"], rating["v"], att["v"], dl["v"]])
+        data_matrix.append([rev["v"], basket["v"], rating["v"], att["v"]])
 
     if len(data_matrix) < 2:
         return {"matrix": [], "labels": metric_labels}
@@ -634,12 +579,7 @@ async def review_queue():
            JOIN employees e ON s.employee_id = e.id
            WHERE s.status = 'pending' ORDER BY s.submitted_at DESC"""
     )
-    pending_downloads = query(
-        """SELECT a.*, e.name as employee_name, 'download' as type FROM app_downloads a
-           JOIN employees e ON a.employee_id = e.id
-           WHERE a.status = 'pending' ORDER BY a.submitted_at DESC"""
-    )
-    return {"sales": pending_sales, "downloads": pending_downloads, "total": len(pending_sales) + len(pending_downloads)}
+    return {"sales": pending_sales, "downloads": [], "total": len(pending_sales)}
 
 
 @app.post("/api/manager/daily-rating")
@@ -732,7 +672,7 @@ async def get_flagged_sales():
     rows = query(
         """SELECT s.id as saleId, s.employee_id as employeeId, e.name as employeeName,
                   d.name as department, s.revenue as saleAmount, s.num_items as numberOfItems,
-                  s.basket_size as basketSize, s.app_download as appDownload,
+                  s.basket_size as basketSize,
                   s.receipt_photo_path as receiptPhoto, s.submitted_at as submittedAt,
                   s.flags, s.is_flagged as isFlagged, s.resolved_by_admin as resolvedByAdmin
            FROM sales s
@@ -741,6 +681,8 @@ async def get_flagged_sales():
            WHERE s.is_flagged = 1 AND s.resolved_by_admin = 0
            ORDER BY s.submitted_at DESC"""
     )
+
+    ws, we = get_date_range("weekly")
     result = []
     for row in rows:
         r = dict(row)
@@ -748,9 +690,83 @@ async def get_flagged_sales():
             r["flags"] = json.loads(r["flags"]) if r["flags"] else []
         except (json.JSONDecodeError, TypeError):
             r["flags"] = []
-        r["appDownload"] = bool(r["appDownload"])
         r["isFlagged"] = bool(r["isFlagged"])
         r["resolvedByAdmin"] = bool(r["resolvedByAdmin"])
+
+        # Compute score impact delta (Change 4)
+        emp_id = r["employeeId"]
+        try:
+            current_score = compute_productivity_index(emp_id, ws, we)
+            current_p = current_score["productivity_index"]
+
+            # Get current weekly totals for this employee
+            wr = query(
+                "SELECT COALESCE(SUM(revenue), 0) as v FROM sales WHERE employee_id = ? AND sale_date BETWEEN ? AND ? AND admin_action IS NOT 'REJECTED'",
+                (emp_id, ws, we), one=True
+            )
+            tb = query(
+                "SELECT COUNT(*) as v FROM sales WHERE employee_id = ? AND sale_date BETWEEN ? AND ? AND admin_action IS NOT 'REJECTED'",
+                (emp_id, ws, we), one=True
+            )
+
+            weekly_rev = wr["v"] if wr else 0
+            total_bills = tb["v"] if tb else 0
+
+            # Adjusted totals without this sale
+            adj_revenue = weekly_rev - r["saleAmount"]
+            adj_bills = total_bills - 1
+
+            # Recompute M1 (Revenue vs Target)
+            dept = query(
+                """SELECT d.weekly_revenue_target FROM employees e
+                   JOIN departments d ON e.department_id = d.id WHERE e.id = ?""",
+                (emp_id,), one=True
+            )
+            target = dept["weekly_revenue_target"] if dept and dept["weekly_revenue_target"] > 0 else 1
+            from datetime import datetime as dt_cls
+            d1 = dt_cls.strptime(ws, "%Y-%m-%d")
+            d2 = dt_cls.strptime(we, "%Y-%m-%d")
+            weeks = max(1, (d2 - d1).days / 7)
+            adj_m1 = min(100, (adj_revenue / weeks / target) * 100) if adj_revenue > 0 else 0
+
+            # Recompute M2 (Basket Performance) without this sale's basket
+            all_baskets = query(
+                """SELECT basket_size FROM sales WHERE employee_id = ? AND sale_date BETWEEN ? AND ?
+                   AND admin_action IS NOT 'REJECTED' AND id != ?""",
+                (emp_id, ws, we, r["saleId"])
+            )
+            dept_basket = query(
+                """SELECT d.avg_basket_size FROM employees e
+                   JOIN departments d ON e.department_id = d.id WHERE e.id = ?""",
+                (emp_id,), one=True
+            )
+            dept_bsz = dept_basket["avg_basket_size"] if dept_basket and dept_basket["avg_basket_size"] > 0 else 1
+            if all_baskets:
+                adj_avg_basket = sum(b["basket_size"] for b in all_baskets) / len(all_baskets)
+                adj_m2 = min(100, (adj_avg_basket / dept_bsz) * 100)
+            else:
+                adj_m2 = 0
+
+            # Keep M3-M8 unchanged from current score
+            m = current_score["metrics"]
+            projected_p = round(
+                0.30 * adj_m1 +
+                0.25 * adj_m2 +
+                0.15 * m["manager_rating"] +
+                0.10 * m["growth_trend"] +
+                0.10 * m["stability_index"] +
+                0.05 * m["attendance_rate"] +
+                0.05 * m["punctuality"],
+                1
+            )
+            projected_p = min(100, max(0, projected_p))
+
+            r["currentPScore"] = current_p
+            r["projectedPScore"] = projected_p
+        except Exception:
+            r["currentPScore"] = 0
+            r["projectedPScore"] = 0
+
         result.append(r)
     return result
 
@@ -784,10 +800,6 @@ async def resolve_flagged_sale(sale_id: int, action_data: AdminAction):
             "SELECT COUNT(*) as v FROM sales WHERE employee_id = ? AND sale_date BETWEEN ? AND ? AND admin_action IS NOT 'REJECTED'",
             (emp_id, ws, we), one=True
         )
-        total_app_downloads = query(
-            "SELECT COUNT(*) as v FROM app_downloads WHERE employee_id = ? AND download_date BETWEEN ? AND ?",
-            (emp_id, ws, we), one=True
-        )
         avg_basket = query(
             "SELECT COALESCE(AVG(basket_size), 0) as v FROM sales WHERE employee_id = ? AND sale_date BETWEEN ? AND ? AND admin_action IS NOT 'REJECTED'",
             (emp_id, ws, we), one=True
@@ -795,7 +807,6 @@ async def resolve_flagged_sale(sale_id: int, action_data: AdminAction):
         weekly_totals = {
             "weeklyRevenue": round(weekly_revenue["v"], 2),
             "totalBills": total_bills["v"],
-            "totalAppDownloads": total_app_downloads["v"],
             "avgBasketSize": round(avg_basket["v"], 2),
         }
     else:
@@ -808,10 +819,6 @@ async def resolve_flagged_sale(sale_id: int, action_data: AdminAction):
             "SELECT COUNT(*) as v FROM sales WHERE employee_id = ? AND sale_date BETWEEN ? AND ?",
             (emp_id, ws, we), one=True
         )
-        total_app_downloads = query(
-            "SELECT COUNT(*) as v FROM app_downloads WHERE employee_id = ? AND download_date BETWEEN ? AND ?",
-            (emp_id, ws, we), one=True
-        )
         avg_basket = query(
             "SELECT COALESCE(AVG(basket_size), 0) as v FROM sales WHERE employee_id = ? AND sale_date BETWEEN ? AND ?",
             (emp_id, ws, we), one=True
@@ -819,7 +826,6 @@ async def resolve_flagged_sale(sale_id: int, action_data: AdminAction):
         weekly_totals = {
             "weeklyRevenue": round(weekly_revenue["v"], 2),
             "totalBills": total_bills["v"],
-            "totalAppDownloads": total_app_downloads["v"],
             "avgBasketSize": round(avg_basket["v"], 2),
         }
 
@@ -910,10 +916,6 @@ async def employee_dashboard(employee_id: int):
         "SELECT COALESCE(AVG(basket_size), 0) as v FROM sales WHERE employee_id = ? AND status = 'approved' AND sale_date BETWEEN ? AND ?",
         (employee_id, ws, we), one=True
     )
-    weekly_downloads = query(
-        "SELECT COUNT(*) as v FROM app_downloads WHERE employee_id = ? AND status = 'approved' AND download_date BETWEEN ? AND ?",
-        (employee_id, ws, we), one=True
-    )
 
     return {
         "employee": emp,
@@ -925,7 +927,6 @@ async def employee_dashboard(employee_id: int):
             "revenue": round(weekly_revenue["v"], 2),
             "bills": weekly_bills["v"],
             "avg_basket": round(weekly_basket["v"], 2),
-            "app_downloads": weekly_downloads["v"],
         },
     }
 
@@ -970,3 +971,463 @@ async def manager_dashboard(store_id: int = 1):
         "review_queue": review,
         "attendance": today_attendance,
     }
+
+
+# ==================== PHASE 2 — VISUALISATION ENDPOINTS ====================
+
+@app.get("/api/employee/{employee_id}/dashboard")
+async def employee_dashboard_v2(employee_id: int):
+    """Full employee dashboard payload for Phase 2 visualisations."""
+    try:
+        ws, we = get_date_range("weekly")
+
+        emp = query(
+            """SELECT e.id, e.name, e.total_xp, e.level, e.level_title,
+                      d.name as department, d.weekly_revenue_target,
+                      s.name as store_name, s.shift_start_time, e.store_id
+               FROM employees e
+               JOIN departments d ON e.department_id = d.id
+               JOIN stores s ON e.store_id = s.id
+               WHERE e.id = ?""",
+            (employee_id,), one=True
+        )
+        if not emp:
+            raise HTTPException(status_code=404, detail="Employee not found")
+
+        # Compute current week P score with metric breakdown
+        score_data = compute_productivity_index(employee_id, ws, we)
+        metrics = score_data.get("metrics", {})
+
+        # Weekly stats
+        weekly_revenue_row = query(
+            "SELECT COALESCE(SUM(revenue), 0) as v FROM sales WHERE employee_id = ? AND status = 'approved' AND sale_date BETWEEN ? AND ?",
+            (employee_id, ws, we), one=True
+        )
+        total_bills_row = query(
+            "SELECT COUNT(*) as v FROM sales WHERE employee_id = ? AND status = 'approved' AND sale_date BETWEEN ? AND ?",
+            (employee_id, ws, we), one=True
+        )
+        avg_basket_row = query(
+            "SELECT COALESCE(AVG(basket_size), 0) as v FROM sales WHERE employee_id = ? AND status = 'approved' AND sale_date BETWEEN ? AND ?",
+            (employee_id, ws, we), one=True
+        )
+
+        weekly_revenue = round(weekly_revenue_row["v"], 2)
+        weekly_target = emp["weekly_revenue_target"] or 0
+        revenue_remaining = max(0, round(weekly_target - weekly_revenue, 2))
+
+        # Week number
+        today = datetime.now()
+        week_number = today.isocalendar()[1]
+        year = today.year
+
+        # XP and level info
+        level_info = get_level_info(emp["total_xp"])
+
+        # Leaderboard rank
+        lb = get_leaderboard(store_id=emp["store_id"], limit=100)
+        rank = next((e["rank"] for e in lb if e["id"] == employee_id), len(lb))
+        total_employees = len(lb)
+
+        # Weekly trend — last 8 weeks
+        weekly_trend = []
+        for i in range(7, -1, -1):
+            wk_start = (today - timedelta(days=today.weekday()) - timedelta(weeks=i)).strftime("%Y-%m-%d")
+            wk_end = (datetime.strptime(wk_start, "%Y-%m-%d") + timedelta(days=6)).strftime("%Y-%m-%d")
+            wk_rev = query(
+                "SELECT COALESCE(SUM(revenue), 0) as v FROM sales WHERE employee_id = ? AND status = 'approved' AND sale_date BETWEEN ? AND ?",
+                (employee_id, wk_start, wk_end), one=True
+            )
+            wk_num = datetime.strptime(wk_start, "%Y-%m-%d").isocalendar()[1]
+            wk_score = compute_productivity_index(employee_id, wk_start, wk_end)
+            weekly_trend.append({
+                "week": f"W{wk_num}",
+                "revenue": round(wk_rev["v"], 2),
+                "target": weekly_target,
+                "pScore": wk_score.get("productivity_index", 0),
+            })
+
+        # Streak data — last 28 days
+        streak_data = []
+        daily_target = weekly_target / 6 if weekly_target > 0 else 0
+        store_info = query("SELECT shift_start_time FROM stores WHERE id = ?", (emp["store_id"],), one=True)
+        shift_start = store_info["shift_start_time"] if store_info else "09:00"
+
+        for i in range(27, -1, -1):
+            day = (today - timedelta(days=i)).strftime("%Y-%m-%d")
+            day_rev = query(
+                "SELECT COALESCE(SUM(revenue), 0) as v FROM sales WHERE employee_id = ? AND status = 'approved' AND sale_date = ?",
+                (employee_id, day), one=True
+            )
+            att = query(
+                "SELECT punch_in_time, punch_in_status FROM attendance WHERE employee_id = ? AND attendance_date = ?",
+                (employee_id, day), one=True
+            )
+            present = att is not None and att.get("punch_in_status") == "approved"
+            on_time = False
+            if present and att.get("punch_in_time"):
+                try:
+                    pit = datetime.strptime(att["punch_in_time"], "%Y-%m-%d %H:%M:%S")
+                    shift_dt = datetime.strptime(f"{day} {shift_start}", "%Y-%m-%d %H:%M")
+                    on_time = pit <= shift_dt
+                except Exception:
+                    on_time = False
+
+            streak_data.append({
+                "date": day,
+                "hitTarget": day_rev["v"] >= daily_target if daily_target > 0 else False,
+                "present": present,
+                "onTime": on_time,
+            })
+
+        # Gamification
+        gam = get_employee_gamification(employee_id)
+        streak_count = gam.get("streak", 0) if gam else 0
+
+        # Calculate longest streak from streak_data
+        longest = 0
+        current = 0
+        for d in streak_data:
+            if d["hitTarget"] and d["present"]:
+                current += 1
+                longest = max(longest, current)
+            else:
+                current = 0
+
+        # Current streak (counting from today backwards)
+        current_streak = 0
+        for d in reversed(streak_data):
+            if d["hitTarget"] and d["present"]:
+                current_streak += 1
+            else:
+                break
+
+        # Weekly XP
+        weekly_xp = get_xp_for_score(score_data.get("productivity_index", 0))
+
+        # Bonus XP
+        streak_bonus = 200 if current_streak >= 7 else 0
+        leaderboard_bonus = 300 if rank <= 3 else 0
+        avg_rating = query(
+            "SELECT COALESCE(AVG(rating), 0) as v FROM manager_ratings WHERE employee_id = ? AND rating_date BETWEEN ? AND ?",
+            (employee_id, ws, we), one=True
+        )
+        rating_bonus = 150 if avg_rating and avg_rating["v"] >= 5.0 else 0
+
+        return {
+            "employee": {
+                "employeeId": str(employee_id),
+                "name": emp["name"],
+                "department": emp["department"],
+                "level": level_info.get("level", 1),
+                "levelLabel": level_info.get("title", "Rookie"),
+                "xp": emp["total_xp"],
+                "xpToNextLevel": level_info.get("xp_to_next", 0),
+                "weeklyTarget": weekly_target,
+                "shiftStartTime": emp.get("shift_start_time", "09:00"),
+            },
+            "currentWeek": {
+                "weekNumber": week_number,
+                "year": year,
+                "pScore": score_data.get("productivity_index", 0),
+                "M1": round(metrics.get("revenue_vs_target", 0), 1),
+                "M2": round(metrics.get("basket_performance", 0), 1),
+                "M3": round(metrics.get("manager_rating", 0), 1),
+                "M4": round(metrics.get("growth_trend", 0), 1),
+                "M5": round(metrics.get("stability_index", 0), 1),
+                "M7": round(metrics.get("attendance_rate", 0), 1),
+                "M8": round(metrics.get("punctuality", 0), 1),
+                "weeklyRevenue": weekly_revenue,
+                "totalBills": total_bills_row["v"],
+                "avgBasketSize": round(avg_basket_row["v"], 2),
+                "revenueRemaining": revenue_remaining,
+            },
+            "weeklyTrend": weekly_trend,
+            "streakData": streak_data,
+            "gamification": {
+                "currentStreak": current_streak,
+                "longestStreak": longest,
+                "rank": rank,
+                "totalEmployees": total_employees,
+                "weeklyXP": weekly_xp,
+                "bonusXP": {
+                    "streakBonus": streak_bonus,
+                    "leaderboardBonus": leaderboard_bonus,
+                    "ratingBonus": rating_bonus,
+                },
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/manager/store-overview")
+async def store_overview(store_id: int = 1):
+    """Returns all data needed for manager dashboard charts."""
+    try:
+        ws, we = get_date_range("weekly")
+        today = datetime.now()
+        week_number = today.isocalendar()[1]
+
+        store = query("SELECT id, name FROM stores WHERE id = ?", (store_id,), one=True)
+        if not store:
+            raise HTTPException(status_code=404, detail="Store not found")
+
+        employees = query(
+            """SELECT e.id, e.name, d.name as department, d.weekly_revenue_target,
+                      e.store_id
+               FROM employees e
+               JOIN departments d ON e.department_id = d.id
+               WHERE e.store_id = ? AND e.role = 'employee' AND e.is_active = 1""",
+            (store_id,)
+        )
+
+        # Per-employee current week data
+        emp_data = []
+        for emp in employees:
+            score = compute_productivity_index(emp["id"], ws, we)
+            m = score.get("metrics", {})
+            rev_row = query(
+                "SELECT COALESCE(SUM(revenue), 0) as v FROM sales WHERE employee_id = ? AND status = 'approved' AND sale_date BETWEEN ? AND ?",
+                (emp["id"], ws, we), one=True
+            )
+            bills_row = query(
+                "SELECT COUNT(*) as v FROM sales WHERE employee_id = ? AND status = 'approved' AND sale_date BETWEEN ? AND ?",
+                (emp["id"], ws, we), one=True
+            )
+            basket_row = query(
+                "SELECT COALESCE(AVG(basket_size), 0) as v FROM sales WHERE employee_id = ? AND status = 'approved' AND sale_date BETWEEN ? AND ?",
+                (emp["id"], ws, we), one=True
+            )
+
+            emp_data.append({
+                "employeeId": str(emp["id"]),
+                "name": emp["name"],
+                "department": emp["department"],
+                "pScore": score.get("productivity_index", 0),
+                "M1": round(m.get("revenue_vs_target", 0), 1),
+                "M2": round(m.get("basket_performance", 0), 1),
+                "M3": round(m.get("manager_rating", 0), 1),
+                "M4": round(m.get("growth_trend", 0), 1),
+                "M5": round(m.get("stability_index", 0), 1),
+                "M7": round(m.get("attendance_rate", 0), 1),
+                "M8": round(m.get("punctuality", 0), 1),
+                "weeklyRevenue": round(rev_row["v"], 2),
+                "weeklyTarget": emp["weekly_revenue_target"] or 0,
+                "totalBills": bills_row["v"],
+                "avgBasketSize": round(basket_row["v"], 2),
+                "attendanceRate": round(m.get("attendance_rate", 0), 1),
+                "punctualityScore": round(m.get("punctuality", 0), 1),
+            })
+
+        # Store summary
+        total_rev = sum(e["weeklyRevenue"] for e in emp_data)
+        avg_p = round(sum(e["pScore"] for e in emp_data) / max(1, len(emp_data)), 1)
+        avg_att = round(sum(e["attendanceRate"] for e in emp_data) / max(1, len(emp_data)), 1)
+        above_target = sum(1 for e in emp_data if e["weeklyRevenue"] >= e["weeklyTarget"])
+        below_target = len(emp_data) - above_target
+
+        flagged_count = query(
+            "SELECT COUNT(*) as v FROM sales WHERE is_flagged = 1 AND resolved_by_admin = 0", one=True
+        )
+        geofence_count = query(
+            "SELECT COUNT(*) as v FROM geofence_alerts WHERE resolved = 0", one=True
+        )
+
+        # Weekly trend — last 8 weeks store-level
+        weekly_trend = []
+        for i in range(7, -1, -1):
+            wk_start = (today - timedelta(days=today.weekday()) - timedelta(weeks=i)).strftime("%Y-%m-%d")
+            wk_end = (datetime.strptime(wk_start, "%Y-%m-%d") + timedelta(days=6)).strftime("%Y-%m-%d")
+            wk_num = datetime.strptime(wk_start, "%Y-%m-%d").isocalendar()[1]
+
+            store_rev = query(
+                """SELECT COALESCE(SUM(s.revenue), 0) as v FROM sales s
+                   JOIN employees e ON s.employee_id = e.id
+                   WHERE e.store_id = ? AND s.status = 'approved' AND s.sale_date BETWEEN ? AND ?""",
+                (store_id, wk_start, wk_end), one=True
+            )
+
+            # Avg pScore and attendance for the week
+            wk_scores = []
+            wk_att = []
+            for emp in employees:
+                sc = compute_productivity_index(emp["id"], wk_start, wk_end)
+                wk_scores.append(sc.get("productivity_index", 0))
+                att_days = query(
+                    "SELECT COUNT(*) as v FROM attendance WHERE employee_id = ? AND punch_in_status = 'approved' AND attendance_date BETWEEN ? AND ?",
+                    (emp["id"], wk_start, wk_end), one=True
+                )
+                # 6 working days per week
+                wk_att.append(round((att_days["v"] / 6) * 100, 1) if att_days else 0)
+
+            weekly_trend.append({
+                "week": f"W{wk_num}",
+                "avgPScore": round(sum(wk_scores) / max(1, len(wk_scores)), 1),
+                "totalRevenue": round(store_rev["v"], 2),
+                "avgAttendance": round(sum(wk_att) / max(1, len(wk_att)), 1),
+            })
+
+        # Basket trend — last 8 weeks per employee
+        basket_trend = []
+        for i in range(7, -1, -1):
+            wk_start = (today - timedelta(days=today.weekday()) - timedelta(weeks=i)).strftime("%Y-%m-%d")
+            wk_end = (datetime.strptime(wk_start, "%Y-%m-%d") + timedelta(days=6)).strftime("%Y-%m-%d")
+            wk_num = datetime.strptime(wk_start, "%Y-%m-%d").isocalendar()[1]
+
+            emp_baskets = []
+            for emp in employees:
+                bsk = query(
+                    "SELECT COALESCE(AVG(basket_size), 0) as v FROM sales WHERE employee_id = ? AND status = 'approved' AND sale_date BETWEEN ? AND ?",
+                    (emp["id"], wk_start, wk_end), one=True
+                )
+                emp_baskets.append({
+                    "employeeId": str(emp["id"]),
+                    "name": emp["name"],
+                    "avgBasketSize": round(bsk["v"], 2),
+                })
+
+            basket_trend.append({
+                "week": f"W{wk_num}",
+                "employees": emp_baskets,
+            })
+
+        # Attendance matrix — last 28 days × all employees
+        store_shift = query("SELECT shift_start_time FROM stores WHERE id = ?", (store_id,), one=True)
+        shift_time = store_shift["shift_start_time"] if store_shift else "09:00"
+
+        attendance_matrix = []
+        for emp in employees:
+            days = []
+            for i in range(27, -1, -1):
+                day = (today - timedelta(days=i)).strftime("%Y-%m-%d")
+                day_dt = datetime.strptime(day, "%Y-%m-%d")
+
+                # Skip Sundays
+                if day_dt.weekday() == 6:
+                    days.append({"date": day, "status": "DAY_OFF"})
+                    continue
+
+                att = query(
+                    "SELECT punch_in_time, punch_in_status FROM attendance WHERE employee_id = ? AND attendance_date = ?",
+                    (emp["id"], day), one=True
+                )
+
+                if not att or att.get("punch_in_status") != "approved":
+                    days.append({"date": day, "status": "ABSENT"})
+                else:
+                    try:
+                        pit = datetime.strptime(att["punch_in_time"], "%Y-%m-%d %H:%M:%S")
+                        shift_dt = datetime.strptime(f"{day} {shift_time}", "%Y-%m-%d %H:%M")
+                        diff_min = (pit - shift_dt).total_seconds() / 60
+                        if diff_min <= 0:
+                            status = "ON_TIME"
+                        elif diff_min <= 30:
+                            status = "LATE"
+                        else:
+                            status = "VERY_LATE"
+                    except Exception:
+                        status = "ON_TIME"
+                    days.append({"date": day, "status": status})
+
+            attendance_matrix.append({
+                "employeeId": str(emp["id"]),
+                "name": emp["name"],
+                "days": days,
+            })
+
+        return {
+            "storeId": str(store_id),
+            "storeName": store["name"],
+            "currentWeek": {
+                "weekNumber": week_number,
+                "employees": emp_data,
+                "storeSummary": {
+                    "avgPScore": avg_p,
+                    "totalRevenue": round(total_rev, 2),
+                    "avgAttendance": avg_att,
+                    "flaggedSalesPending": flagged_count["v"] if flagged_count else 0,
+                    "geofenceAlertsPending": geofence_count["v"] if geofence_count else 0,
+                    "employeesAboveTarget": above_target,
+                    "employeesBelowTarget": below_target,
+                },
+            },
+            "weeklyTrend": weekly_trend,
+            "basketTrend": basket_trend,
+            "attendanceMatrix": attendance_matrix,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/manager/department-summary")
+async def department_summary(store_id: int = 1):
+    """Returns department-level aggregates for comparison charts."""
+    try:
+        ws, we = get_date_range("weekly")
+
+        departments = query("SELECT id, name FROM departments WHERE store_id = ?", (store_id,))
+
+        dept_data = []
+        for dept in departments:
+            emps = query(
+                "SELECT id FROM employees WHERE department_id = ? AND role = 'employee' AND is_active = 1",
+                (dept["id"],)
+            )
+            headcount = len(emps)
+            if headcount == 0:
+                dept_data.append({
+                    "department": dept["name"],
+                    "avgPScore": 0, "avgRevenue": 0, "avgBasketSize": 0,
+                    "avgAttendance": 0, "headcount": 0, "employeesAboveTarget": 0,
+                })
+                continue
+
+            scores = []
+            revs = []
+            baskets = []
+            att_rates = []
+            above_target = 0
+
+            dept_target = query(
+                "SELECT weekly_revenue_target FROM departments WHERE id = ?",
+                (dept["id"],), one=True
+            )
+            target = dept_target["weekly_revenue_target"] if dept_target else 0
+
+            for emp in emps:
+                sc = compute_productivity_index(emp["id"], ws, we)
+                scores.append(sc.get("productivity_index", 0))
+                m = sc.get("metrics", {})
+                att_rates.append(m.get("attendance_rate", 0))
+
+                rev = query(
+                    "SELECT COALESCE(SUM(revenue), 0) as v FROM sales WHERE employee_id = ? AND status = 'approved' AND sale_date BETWEEN ? AND ?",
+                    (emp["id"], ws, we), one=True
+                )
+                bsk = query(
+                    "SELECT COALESCE(AVG(basket_size), 0) as v FROM sales WHERE employee_id = ? AND status = 'approved' AND sale_date BETWEEN ? AND ?",
+                    (emp["id"], ws, we), one=True
+                )
+                revs.append(rev["v"])
+                baskets.append(bsk["v"])
+                if rev["v"] >= target:
+                    above_target += 1
+
+            dept_data.append({
+                "department": dept["name"],
+                "avgPScore": round(sum(scores) / headcount, 1),
+                "avgRevenue": round(sum(revs) / headcount, 2),
+                "avgBasketSize": round(sum(baskets) / headcount, 2),
+                "avgAttendance": round(sum(att_rates) / headcount, 1),
+                "headcount": headcount,
+                "employeesAboveTarget": above_target,
+            })
+
+        return {"departments": dept_data}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

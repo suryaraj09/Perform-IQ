@@ -10,7 +10,6 @@ interface ClusterData {
             name: string;
             total_revenue: number;
             avg_basket: number;
-            app_conversion: number;
         }>;
     }>;
     centroids: Array<{
@@ -18,7 +17,6 @@ interface ClusterData {
         name: string;
         revenue: number;
         basket_size: number;
-        app_conversion: number;
     }>;
     n_employees: number;
 }
@@ -41,7 +39,6 @@ export default function Clustering() {
         data: cluster.employees.map(emp => ({
             x: emp.total_revenue / 1000,
             y: emp.avg_basket,
-            z: emp.app_conversion * 1000,
             name: emp.name,
             cluster: cluster.name,
         })),
@@ -50,7 +47,7 @@ export default function Clustering() {
     return (
         <div className="animate-in">
             <p style={{ color: 'var(--text-secondary)', marginBottom: 24 }}>
-                K-Means clustering of <strong>{data.n_employees}</strong> employees based on revenue, basket size & app conversion
+                K-Means clustering of <strong>{data.n_employees}</strong> employees based on revenue &amp; basket size
             </p>
 
             {/* Scatter Plot */}
@@ -72,7 +69,7 @@ export default function Clustering() {
                             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
                             <XAxis type="number" dataKey="x" name="Revenue" tick={{ fill: 'var(--text-muted)', fontSize: 11 }} label={{ value: 'Revenue (₹K)', position: 'bottom', fill: 'var(--text-muted)', fontSize: 12 }} />
                             <YAxis type="number" dataKey="y" name="Basket Size" tick={{ fill: 'var(--text-muted)', fontSize: 11 }} label={{ value: 'Avg Basket (₹)', angle: -90, position: 'insideLeft', fill: 'var(--text-muted)', fontSize: 12 }} />
-                            <ZAxis type="number" dataKey="z" range={[40, 200]} />
+                            <ZAxis type="number" dataKey="z" range={[60, 60]} />
                             <Tooltip
                                 contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text-primary)' }}
                                 formatter={(_value: any, name: any, props: any) => {

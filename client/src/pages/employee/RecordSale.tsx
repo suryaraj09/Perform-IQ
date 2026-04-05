@@ -9,14 +9,12 @@ interface SaleResponse {
     message: string;
     weeklyRevenue: number;
     totalBills: number;
-    totalAppDownloads: number;
     avgBasketSize: number;
 }
 
 export default function RecordSale({ employeeId }: { employeeId: number }) {
     const [revenue, setRevenue] = useState('');
     const [numItems, setNumItems] = useState('1');
-    const [appDownload, setAppDownload] = useState(false);
     const [receiptFile, setReceiptFile] = useState<File | null>(null);
     const [previewUrl, setPreviewUrl] = useState<string | null>(null);
     const [submitting, setSubmitting] = useState(false);
@@ -118,7 +116,6 @@ export default function RecordSale({ employeeId }: { employeeId: number }) {
                     employee_id: employeeId,
                     revenue: parseFloat(revenue),
                     num_items: parseInt(numItems),
-                    app_download: appDownload,
                     receipt_photo_path: photoPath,
                 }),
             });
@@ -130,7 +127,6 @@ export default function RecordSale({ employeeId }: { employeeId: number }) {
             setBillsToday(prev => prev + 1);
             setRevenue('');
             setNumItems('1');
-            setAppDownload(false);
             setReceiptFile(null);
             setPreviewUrl(null);
             setTimeout(() => setSuccess(null), 3000);
@@ -156,7 +152,7 @@ export default function RecordSale({ employeeId }: { employeeId: number }) {
                     }}
                 >
                     {success === 'clean' ? <Check size={20} /> : <AlertTriangle size={20} />}
-                    {success === 'clean' ? `Sale recorded! +1 bills today` : `Sale recorded and under review`}
+                    {success === 'clean' ? `Sale recorded! ₹${revenue || '0'} · ${numItems} items` : `Sale recorded and under review`}
                 </div>
             )}
 
@@ -275,53 +271,6 @@ export default function RecordSale({ employeeId }: { employeeId: number }) {
                     <div className="form-group">
                         <label className="form-label">Number of Items</label>
                         <input className="form-input" type="number" min="1" value={numItems} onChange={e => setNumItems(e.target.value)} />
-                    </div>
-
-                    {/* App Download Toggle */}
-                    <div className="form-group">
-                        <label className="form-label">Did the customer download the Blue Buddha app?</label>
-                        <div
-                            style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: 12,
-                                marginTop: 4,
-                            }}
-                        >
-                            <span style={{ color: !appDownload ? 'var(--text-primary)' : 'var(--text-secondary)', fontWeight: !appDownload ? 600 : 400, fontSize: '0.9rem' }}>NO</span>
-                            <button
-                                type="button"
-                                onClick={() => setAppDownload(!appDownload)}
-                                style={{
-                                    width: 52,
-                                    height: 28,
-                                    borderRadius: 14,
-                                    border: 'none',
-                                    background: appDownload ? 'var(--accent)' : 'var(--border)',
-                                    position: 'relative',
-                                    cursor: 'pointer',
-                                    transition: 'background 0.2s ease',
-                                    padding: 0,
-                                    flexShrink: 0,
-                                }}
-                                aria-label="Toggle app download"
-                            >
-                                <span
-                                    style={{
-                                        position: 'absolute',
-                                        top: 3,
-                                        left: appDownload ? 27 : 3,
-                                        width: 22,
-                                        height: 22,
-                                        borderRadius: '50%',
-                                        background: '#fff',
-                                        transition: 'left 0.2s ease',
-                                        boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
-                                    }}
-                                />
-                            </button>
-                            <span style={{ color: appDownload ? 'var(--accent)' : 'var(--text-secondary)', fontWeight: appDownload ? 600 : 400, fontSize: '0.9rem' }}>YES</span>
-                        </div>
                     </div>
 
                     <button className="btn btn-primary" type="submit" disabled={submitting} style={{ width: '100%', justifyContent: 'center', marginTop: 8 }}>

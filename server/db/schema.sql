@@ -24,7 +24,6 @@ CREATE TABLE IF NOT EXISTS departments (
     name TEXT NOT NULL,
     weekly_revenue_target REAL NOT NULL DEFAULT 0,
     avg_basket_size REAL NOT NULL DEFAULT 0,
-    avg_app_conversion_rate REAL NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (store_id) REFERENCES stores(id)
 );
@@ -57,7 +56,6 @@ CREATE TABLE IF NOT EXISTS sales (
     revenue REAL NOT NULL,
     basket_size REAL NOT NULL,
     num_items INTEGER NOT NULL DEFAULT 1,
-    app_download INTEGER NOT NULL DEFAULT 0,
     receipt_photo_path TEXT,
     status TEXT NOT NULL CHECK(status IN ('pending', 'approved', 'rejected')) DEFAULT 'pending',
     rejection_reason TEXT,
@@ -75,21 +73,7 @@ CREATE TABLE IF NOT EXISTS sales (
     FOREIGN KEY (reviewed_by) REFERENCES employees(id)
 );
 
--- App download records
-CREATE TABLE IF NOT EXISTS app_downloads (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    employee_id INTEGER NOT NULL,
-    screenshot_photo_path TEXT,
-    customer_name TEXT,
-    status TEXT NOT NULL CHECK(status IN ('pending', 'approved', 'rejected')) DEFAULT 'pending',
-    rejection_reason TEXT,
-    reviewed_by INTEGER,
-    reviewed_at TEXT,
-    submitted_at TEXT NOT NULL DEFAULT (datetime('now')),
-    download_date TEXT NOT NULL DEFAULT (date('now')),
-    FOREIGN KEY (employee_id) REFERENCES employees(id),
-    FOREIGN KEY (reviewed_by) REFERENCES employees(id)
-);
+
 
 -- Attendance
 CREATE TABLE IF NOT EXISTS attendance (
@@ -154,7 +138,6 @@ CREATE TABLE IF NOT EXISTS geofence_alerts (
 CREATE INDEX IF NOT EXISTS idx_sales_employee ON sales(employee_id);
 CREATE INDEX IF NOT EXISTS idx_sales_date ON sales(sale_date);
 CREATE INDEX IF NOT EXISTS idx_sales_status ON sales(status);
-CREATE INDEX IF NOT EXISTS idx_app_downloads_employee ON app_downloads(employee_id);
 CREATE INDEX IF NOT EXISTS idx_attendance_employee ON attendance(employee_id);
 CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance(attendance_date);
 CREATE INDEX IF NOT EXISTS idx_manager_ratings_employee ON manager_ratings(employee_id);
