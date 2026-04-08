@@ -30,15 +30,12 @@ from metrics.clustering import cluster_employees
 from gamification import get_employee_gamification, get_leaderboard, get_level_info, get_xp_for_score
 from attendance import punch_in, punch_out, get_attendance_status
 from migrate_weights import run_migration
-<<<<<<< HEAD
-=======
 from migrate_phase4 import run_phase4_migration
 from backfill_scores import backfill_all_scores
 from metrics.clustering import run_performance_clustering
 from migrate_warehouse import run_warehouse_migration
 from migrate_phase6 import migrate as run_phase6_migration
 from etl_pipeline import run_etl
->>>>>>> 55b7e13 (Removed JSON files containing secrets)
 
 app = FastAPI(title="PerformIQ API", version="1.0.0")
 
@@ -317,12 +314,8 @@ def has_active_punch_in(employee_id: int) -> bool:
 
 
 def check_for_flags(sale_revenue: float, num_items: int, employee_id: int) -> list:
-<<<<<<< HEAD
-    """Run all 4 flag rules and return triggered flags."""
-=======
     """Run flag rules and return triggered flags using DB thresholds."""
     from config_service import get_config
->>>>>>> 55b7e13 (Removed JSON files containing secrets)
     flags = []
 
     # RULE 1 — HIGH_SALE_AMOUNT
@@ -396,13 +389,10 @@ async def auto_confirm_flagged_sales():
 async def startup():
     init_db()
     run_migration()
-<<<<<<< HEAD
-=======
     run_phase4_migration()
     run_warehouse_migration()
     run_phase6_migration()
     backfill_all_scores()
->>>>>>> 55b7e13 (Removed JSON files containing secrets)
     asyncio.create_task(auto_confirm_flagged_sales())
 
 
@@ -1140,17 +1130,10 @@ async def employee_dashboard_v2(employee_id: int):
         emp = query(
             """SELECT e.id, e.name, e.total_xp, e.level, e.level_title,
                       d.name as department, d.weekly_revenue_target,
-<<<<<<< HEAD
-                      s.name as store_name, s.shift_start_time, e.store_id
-               FROM employees e
-               JOIN departments d ON e.department_id = d.id
-               JOIN stores s ON e.store_id = s.id
-=======
-                      s.store_name as store_name, e.store_id
+                      s.store_name as store_name, s.shift_start_time, e.store_id
                FROM employees e
                JOIN departments d ON e.department_id = d.id
                JOIN stores s ON e.store_id = s.store_id
->>>>>>> 55b7e13 (Removed JSON files containing secrets)
                WHERE e.id = ?""",
             (employee_id,), one=True
         )
@@ -1213,11 +1196,7 @@ async def employee_dashboard_v2(employee_id: int):
         # Streak data — last 28 days
         streak_data = []
         daily_target = weekly_target / 6 if weekly_target > 0 else 0
-<<<<<<< HEAD
-        store_info = query("SELECT shift_start_time FROM stores WHERE id = ?", (emp["store_id"],), one=True)
-=======
         store_info = query("SELECT shift_start_time FROM stores WHERE store_id = ?", (emp["store_id"],), one=True)
->>>>>>> 55b7e13 (Removed JSON files containing secrets)
         shift_start = store_info["shift_start_time"] if store_info else "09:00"
 
         for i in range(27, -1, -1):
@@ -1331,25 +1310,17 @@ async def employee_dashboard_v2(employee_id: int):
 
 
 @app.get("/api/manager/store-overview")
-<<<<<<< HEAD
-async def store_overview(store_id: int = 1):
-=======
 async def store_overview(request: Request, store_id: Optional[str] = None):
-    """Returns key metrics for a specific store."""
+    """Returns key metrics and dashboard data for a specific store."""
     if store_id is None:
         store_id = getattr(request.state, "scoped_store_id", "S001") or "S001"
->>>>>>> 55b7e13 (Removed JSON files containing secrets)
     """Returns all data needed for manager dashboard charts."""
     try:
         ws, we = get_date_range("weekly")
         today = datetime.now()
         week_number = today.isocalendar()[1]
 
-<<<<<<< HEAD
-        store = query("SELECT id, name FROM stores WHERE id = ?", (store_id,), one=True)
-=======
         store = query("SELECT store_id as id, store_name as name FROM stores WHERE store_id = ?", (store_id,), one=True)
->>>>>>> 55b7e13 (Removed JSON files containing secrets)
         if not store:
             raise HTTPException(status_code=404, detail="Store not found")
 
@@ -1473,11 +1444,7 @@ async def store_overview(request: Request, store_id: Optional[str] = None):
             })
 
         # Attendance matrix — last 28 days × all employees
-<<<<<<< HEAD
-        store_shift = query("SELECT shift_start_time FROM stores WHERE id = ?", (store_id,), one=True)
-=======
         store_shift = query("SELECT shift_start_time FROM stores WHERE store_id = ?", (store_id,), one=True)
->>>>>>> 55b7e13 (Removed JSON files containing secrets)
         shift_time = store_shift["shift_start_time"] if store_shift else "09:00"
 
         attendance_matrix = []
@@ -1547,21 +1514,13 @@ async def store_overview(request: Request, store_id: Optional[str] = None):
 
 
 @app.get("/api/manager/department-summary")
-<<<<<<< HEAD
-async def department_summary(store_id: int = 1):
-=======
 async def department_summary(request: Request):
     store_id = getattr(request.state, "scoped_store_id", "S001") or "S001"
->>>>>>> 55b7e13 (Removed JSON files containing secrets)
     """Returns department-level aggregates for comparison charts."""
     try:
         ws, we = get_date_range("weekly")
 
-<<<<<<< HEAD
-        departments = query("SELECT id, name FROM departments WHERE store_id = ?", (store_id,))
-=======
         departments = query("SELECT id, name FROM departments WHERE store_id_text = ? OR store_id = ?", (store_id, store_id))
->>>>>>> 55b7e13 (Removed JSON files containing secrets)
 
         dept_data = []
         for dept in departments:
@@ -1622,8 +1581,6 @@ async def department_summary(request: Request):
         return {"departments": dept_data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-<<<<<<< HEAD
-=======
 
 
 @app.get("/api/manager/available-weeks")
@@ -2795,4 +2752,3 @@ async def run_scheduler():
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(run_scheduler())
->>>>>>> 55b7e13 (Removed JSON files containing secrets)

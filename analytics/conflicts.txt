@@ -1,0 +1,253 @@
+--- CONFLICT AROUND LINE 1133 ---
+1131:             """SELECT e.id, e.name, e.total_xp, e.level, e.level_title,
+1132:                       d.name as department, d.weekly_revenue_target,
+1133: <<<<<<< HEAD
+1134:                       s.name as store_name, s.shift_start_time, e.store_id
+1135:                FROM employees e
+1136:                JOIN departments d ON e.department_id = d.id
+1137:                JOIN stores s ON e.store_id = s.id
+1138: =======
+1139:                       s.store_name as store_name, e.store_id
+1140:                FROM employees e
+--- CONFLICT AROUND LINE 1138 ---
+1136:                JOIN departments d ON e.department_id = d.id
+1137:                JOIN stores s ON e.store_id = s.id
+1138: =======
+1139:                       s.store_name as store_name, e.store_id
+1140:                FROM employees e
+1141:                JOIN departments d ON e.department_id = d.id
+1142:                JOIN stores s ON e.store_id = s.store_id
+1143: >>>>>>> 55b7e13 (Removed JSON files containing secrets)
+1144:                WHERE e.id = ?""",
+1145:             (employee_id,), one=True
+--- CONFLICT AROUND LINE 1143 ---
+1141:                JOIN departments d ON e.department_id = d.id
+1142:                JOIN stores s ON e.store_id = s.store_id
+1143: >>>>>>> 55b7e13 (Removed JSON files containing secrets)
+1144:                WHERE e.id = ?""",
+1145:             (employee_id,), one=True
+1146:         )
+1147:         if not emp:
+1148:             raise HTTPException(status_code=404, detail="Employee not found")
+1149: 
+1150:         # Compute current week P score with metric breakdown
+--- CONFLICT AROUND LINE 1206 ---
+1204:         streak_data = []
+1205:         daily_target = weekly_target / 6 if weekly_target > 0 else 0
+1206: <<<<<<< HEAD
+1207:         store_info = query("SELECT shift_start_time FROM stores WHERE id = ?", (emp["store_id"],), one=True)
+1208: =======
+1209:         store_info = query("SELECT shift_start_time FROM stores WHERE store_id = ?", (emp["store_id"],), one=True)
+1210: >>>>>>> 55b7e13 (Removed JSON files containing secrets)
+1211:         shift_start = store_info["shift_start_time"] if store_info else "09:00"
+1212: 
+1213:         for i in range(27, -1, -1):
+--- CONFLICT AROUND LINE 1208 ---
+1206: <<<<<<< HEAD
+1207:         store_info = query("SELECT shift_start_time FROM stores WHERE id = ?", (emp["store_id"],), one=True)
+1208: =======
+1209:         store_info = query("SELECT shift_start_time FROM stores WHERE store_id = ?", (emp["store_id"],), one=True)
+1210: >>>>>>> 55b7e13 (Removed JSON files containing secrets)
+1211:         shift_start = store_info["shift_start_time"] if store_info else "09:00"
+1212: 
+1213:         for i in range(27, -1, -1):
+1214:             day = (today - timedelta(days=i)).strftime("%Y-%m-%d")
+1215:             day_rev = query(
+--- CONFLICT AROUND LINE 1210 ---
+1208: =======
+1209:         store_info = query("SELECT shift_start_time FROM stores WHERE store_id = ?", (emp["store_id"],), one=True)
+1210: >>>>>>> 55b7e13 (Removed JSON files containing secrets)
+1211:         shift_start = store_info["shift_start_time"] if store_info else "09:00"
+1212: 
+1213:         for i in range(27, -1, -1):
+1214:             day = (today - timedelta(days=i)).strftime("%Y-%m-%d")
+1215:             day_rev = query(
+1216:                 "SELECT COALESCE(SUM(revenue), 0) as v FROM sales WHERE employee_id = ? AND status = 'approved' AND sale_date = ?",
+1217:                 (employee_id, day), one=True
+--- CONFLICT AROUND LINE 1324 ---
+1322: 
+1323: @app.get("/api/manager/store-overview")
+1324: <<<<<<< HEAD
+1325: async def store_overview(store_id: int = 1):
+1326: =======
+1327: async def store_overview(request: Request, store_id: Optional[str] = None):
+1328:     """Returns key metrics for a specific store."""
+1329:     if store_id is None:
+1330:         store_id = getattr(request.state, "scoped_store_id", "S001") or "S001"
+1331: >>>>>>> 55b7e13 (Removed JSON files containing secrets)
+--- CONFLICT AROUND LINE 1326 ---
+1324: <<<<<<< HEAD
+1325: async def store_overview(store_id: int = 1):
+1326: =======
+1327: async def store_overview(request: Request, store_id: Optional[str] = None):
+1328:     """Returns key metrics for a specific store."""
+1329:     if store_id is None:
+1330:         store_id = getattr(request.state, "scoped_store_id", "S001") or "S001"
+1331: >>>>>>> 55b7e13 (Removed JSON files containing secrets)
+1332:     """Returns all data needed for manager dashboard charts."""
+1333:     try:
+--- CONFLICT AROUND LINE 1331 ---
+1329:     if store_id is None:
+1330:         store_id = getattr(request.state, "scoped_store_id", "S001") or "S001"
+1331: >>>>>>> 55b7e13 (Removed JSON files containing secrets)
+1332:     """Returns all data needed for manager dashboard charts."""
+1333:     try:
+1334:         ws, we = get_date_range("weekly")
+1335:         today = datetime.now()
+1336:         week_number = today.isocalendar()[1]
+1337: 
+1338: <<<<<<< HEAD
+--- CONFLICT AROUND LINE 1338 ---
+1336:         week_number = today.isocalendar()[1]
+1337: 
+1338: <<<<<<< HEAD
+1339:         store = query("SELECT id, name FROM stores WHERE id = ?", (store_id,), one=True)
+1340: =======
+1341:         store = query("SELECT store_id as id, store_name as name FROM stores WHERE store_id = ?", (store_id,), one=True)
+1342: >>>>>>> 55b7e13 (Removed JSON files containing secrets)
+1343:         if not store:
+1344:             raise HTTPException(status_code=404, detail="Store not found")
+1345: 
+--- CONFLICT AROUND LINE 1340 ---
+1338: <<<<<<< HEAD
+1339:         store = query("SELECT id, name FROM stores WHERE id = ?", (store_id,), one=True)
+1340: =======
+1341:         store = query("SELECT store_id as id, store_name as name FROM stores WHERE store_id = ?", (store_id,), one=True)
+1342: >>>>>>> 55b7e13 (Removed JSON files containing secrets)
+1343:         if not store:
+1344:             raise HTTPException(status_code=404, detail="Store not found")
+1345: 
+1346:         employees = query(
+1347:             """SELECT e.id, e.name, d.name as department, d.weekly_revenue_target,
+--- CONFLICT AROUND LINE 1342 ---
+1340: =======
+1341:         store = query("SELECT store_id as id, store_name as name FROM stores WHERE store_id = ?", (store_id,), one=True)
+1342: >>>>>>> 55b7e13 (Removed JSON files containing secrets)
+1343:         if not store:
+1344:             raise HTTPException(status_code=404, detail="Store not found")
+1345: 
+1346:         employees = query(
+1347:             """SELECT e.id, e.name, d.name as department, d.weekly_revenue_target,
+1348:                       e.store_id
+1349:                FROM employees e
+--- CONFLICT AROUND LINE 1466 ---
+1464: 
+1465:         # Attendance matrix — last 28 days × all employees
+1466: <<<<<<< HEAD
+1467:         store_shift = query("SELECT shift_start_time FROM stores WHERE id = ?", (store_id,), one=True)
+1468: =======
+1469:         store_shift = query("SELECT shift_start_time FROM stores WHERE store_id = ?", (store_id,), one=True)
+1470: >>>>>>> 55b7e13 (Removed JSON files containing secrets)
+1471:         shift_time = store_shift["shift_start_time"] if store_shift else "09:00"
+1472: 
+1473:         attendance_matrix = []
+--- CONFLICT AROUND LINE 1468 ---
+1466: <<<<<<< HEAD
+1467:         store_shift = query("SELECT shift_start_time FROM stores WHERE id = ?", (store_id,), one=True)
+1468: =======
+1469:         store_shift = query("SELECT shift_start_time FROM stores WHERE store_id = ?", (store_id,), one=True)
+1470: >>>>>>> 55b7e13 (Removed JSON files containing secrets)
+1471:         shift_time = store_shift["shift_start_time"] if store_shift else "09:00"
+1472: 
+1473:         attendance_matrix = []
+1474:         for emp in employees:
+1475:             days = []
+--- CONFLICT AROUND LINE 1470 ---
+1468: =======
+1469:         store_shift = query("SELECT shift_start_time FROM stores WHERE store_id = ?", (store_id,), one=True)
+1470: >>>>>>> 55b7e13 (Removed JSON files containing secrets)
+1471:         shift_time = store_shift["shift_start_time"] if store_shift else "09:00"
+1472: 
+1473:         attendance_matrix = []
+1474:         for emp in employees:
+1475:             days = []
+1476:             for i in range(27, -1, -1):
+1477:                 day = (today - timedelta(days=i)).strftime("%Y-%m-%d")
+--- CONFLICT AROUND LINE 1540 ---
+1538: 
+1539: @app.get("/api/manager/department-summary")
+1540: <<<<<<< HEAD
+1541: async def department_summary(store_id: int = 1):
+1542: =======
+1543: async def department_summary(request: Request):
+1544:     store_id = getattr(request.state, "scoped_store_id", "S001") or "S001"
+1545: >>>>>>> 55b7e13 (Removed JSON files containing secrets)
+1546:     """Returns department-level aggregates for comparison charts."""
+1547:     try:
+--- CONFLICT AROUND LINE 1542 ---
+1540: <<<<<<< HEAD
+1541: async def department_summary(store_id: int = 1):
+1542: =======
+1543: async def department_summary(request: Request):
+1544:     store_id = getattr(request.state, "scoped_store_id", "S001") or "S001"
+1545: >>>>>>> 55b7e13 (Removed JSON files containing secrets)
+1546:     """Returns department-level aggregates for comparison charts."""
+1547:     try:
+1548:         ws, we = get_date_range("weekly")
+1549: 
+--- CONFLICT AROUND LINE 1545 ---
+1543: async def department_summary(request: Request):
+1544:     store_id = getattr(request.state, "scoped_store_id", "S001") or "S001"
+1545: >>>>>>> 55b7e13 (Removed JSON files containing secrets)
+1546:     """Returns department-level aggregates for comparison charts."""
+1547:     try:
+1548:         ws, we = get_date_range("weekly")
+1549: 
+1550: <<<<<<< HEAD
+1551:         departments = query("SELECT id, name FROM departments WHERE store_id = ?", (store_id,))
+1552: =======
+--- CONFLICT AROUND LINE 1550 ---
+1548:         ws, we = get_date_range("weekly")
+1549: 
+1550: <<<<<<< HEAD
+1551:         departments = query("SELECT id, name FROM departments WHERE store_id = ?", (store_id,))
+1552: =======
+1553:         departments = query("SELECT id, name FROM departments WHERE store_id_text = ? OR store_id = ?", (store_id, store_id))
+1554: >>>>>>> 55b7e13 (Removed JSON files containing secrets)
+1555: 
+1556:         dept_data = []
+1557:         for dept in departments:
+--- CONFLICT AROUND LINE 1552 ---
+1550: <<<<<<< HEAD
+1551:         departments = query("SELECT id, name FROM departments WHERE store_id = ?", (store_id,))
+1552: =======
+1553:         departments = query("SELECT id, name FROM departments WHERE store_id_text = ? OR store_id = ?", (store_id, store_id))
+1554: >>>>>>> 55b7e13 (Removed JSON files containing secrets)
+1555: 
+1556:         dept_data = []
+1557:         for dept in departments:
+1558:             emps = query(
+1559:                 "SELECT id FROM employees WHERE department_id = ? AND role = 'employee' AND is_active = 1",
+--- CONFLICT AROUND LINE 1554 ---
+1552: =======
+1553:         departments = query("SELECT id, name FROM departments WHERE store_id_text = ? OR store_id = ?", (store_id, store_id))
+1554: >>>>>>> 55b7e13 (Removed JSON files containing secrets)
+1555: 
+1556:         dept_data = []
+1557:         for dept in departments:
+1558:             emps = query(
+1559:                 "SELECT id FROM employees WHERE department_id = ? AND role = 'employee' AND is_active = 1",
+1560:                 (dept["id"],)
+1561:             )
+--- CONFLICT AROUND LINE 1615 ---
+1613:     except Exception as e:
+1614:         raise HTTPException(status_code=500, detail=str(e))
+1615: <<<<<<< HEAD
+1616: =======
+1617: 
+1618: 
+1619: @app.get("/api/manager/available-weeks")
+1620: async def get_available_weeks(request: Request):
+1621:     store_id = getattr(request.state, "scoped_store_id", "S001") or "S001"
+1622:     """Returns distinct week/year combos from weekly_scores."""
+--- CONFLICT AROUND LINE 1616 ---
+1614:         raise HTTPException(status_code=500, detail=str(e))
+1615: <<<<<<< HEAD
+1616: =======
+1617: 
+1618: 
+1619: @app.get("/api/manager/available-weeks")
+1620: async def get_available_weeks(request: Request):
+1621:     store_id = getattr(request.state, "scoped_store_id", "S001") or "S001"
+1622:     """Returns distinct week/year combos from weekly_scores."""
+1623:     try:

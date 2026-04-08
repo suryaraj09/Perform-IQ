@@ -127,16 +127,6 @@ def compute_productivity_index(employee_id: int, start_date: str, end_date: str)
         "punctuality": get_punctuality_score(employee_id, start_date, end_date),
     }
 
-<<<<<<< HEAD
-    weights = {
-        "revenue_vs_target": 0.30,
-        "basket_performance": 0.25,
-        "manager_rating": 0.15,
-        "growth_trend": 0.10,
-        "stability_index": 0.10,
-        "attendance_rate": 0.05,
-        "punctuality": 0.05,
-=======
     # Fetch dynamic weights from DB
     db_weights = get_config('METRIC_WEIGHTS')
     
@@ -149,7 +139,6 @@ def compute_productivity_index(employee_id: int, start_date: str, end_date: str)
         "M5": "stability_index",
         "M7": "attendance_rate",
         "M8": "punctuality",
->>>>>>> 55b7e13 (Removed JSON files containing secrets)
     }
     
     # Construct final weights dict for the response and calculation

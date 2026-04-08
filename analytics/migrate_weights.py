@@ -28,14 +28,8 @@ def _ensure_migrations_table():
     try:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS migrations (
-<<<<<<< HEAD
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT UNIQUE NOT NULL,
-                applied_at TEXT NOT NULL DEFAULT (datetime('now'))
-=======
                 migration_id TEXT PRIMARY KEY,
                 ran_at TEXT NOT NULL
->>>>>>> 55b7e13 (Removed JSON files containing secrets)
             )
         """)
         conn.commit()
@@ -45,22 +39,14 @@ def _ensure_migrations_table():
 
 def _is_migration_applied() -> bool:
     """Check if this migration has already been applied."""
-<<<<<<< HEAD
-    row = query("SELECT id FROM migrations WHERE name = ?", (MIGRATION_NAME,), one=True)
-=======
     row = query("SELECT migration_id FROM migrations WHERE migration_id = ?", (MIGRATION_NAME,), one=True)
->>>>>>> 55b7e13 (Removed JSON files containing secrets)
     return row is not None
 
 
 def _mark_migration_applied():
     """Record that this migration was applied."""
-<<<<<<< HEAD
-    execute("INSERT INTO migrations (name) VALUES (?)", (MIGRATION_NAME,))
-=======
     from datetime import datetime
     execute("INSERT INTO migrations (migration_id, ran_at) VALUES (?, ?)", (MIGRATION_NAME, datetime.now().isoformat()))
->>>>>>> 55b7e13 (Removed JSON files containing secrets)
 
 
 def run_migration():
