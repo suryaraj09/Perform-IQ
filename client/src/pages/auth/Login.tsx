@@ -26,7 +26,8 @@ export default function Login() {
 
     // If already authenticated, redirect to dashboard
     if (!loading && profile) {
-        return <Navigate to={profile.role === 'manager' ? '/manager/dashboard' : '/employee/dashboard'} replace />;
+        const redirectPath = profile.role === 'employee' ? '/employee/dashboard' : '/manager/dashboard';
+        return <Navigate to={redirectPath} replace />;
     }
 
     const handleSubmit = async (e: React.FormEvent) => {

@@ -143,4 +143,19 @@ CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance(attendance_date);
 CREATE INDEX IF NOT EXISTS idx_manager_ratings_employee ON manager_ratings(employee_id);
 CREATE INDEX IF NOT EXISTS idx_badges_employee ON badges(employee_id);
 CREATE INDEX IF NOT EXISTS idx_geofence_alerts_employee ON geofence_alerts(employee_id);
-CREATE INDEX IF NOT EXISTS idx_geofence_alerts_resolved ON geofence_alerts(resolved);
+-- Weekly pre-calculated scores for segmentation
+CREATE TABLE IF NOT EXISTS weekly_scores (
+    employee_id INTEGER NOT NULL,
+    store_id INTEGER NOT NULL,
+    department TEXT NOT NULL,
+    week_number INTEGER NOT NULL,
+    year INTEGER NOT NULL,
+    M1 REAL, M2 REAL, M3 REAL, M4 REAL, M5 REAL, M7 REAL, M8 REAL,
+    P_score REAL,
+    last_updated TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY(employee_id, week_number, year),
+    FOREIGN KEY(employee_id) REFERENCES employees(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_weekly_scores_week ON weekly_scores(week_number, year);
+CREATE INDEX IF NOT EXISTS idx_weekly_scores_store ON weekly_scores(store_id);

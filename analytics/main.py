@@ -17,6 +17,12 @@ from pydantic import BaseModel
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+from fastapi import Request
+from fastapi.responses import JSONResponse
+from firebase_admin import auth
+import firebase_admin_setup
+firebase_admin_setup.init_firebase()
+
 from database import init_db, query, execute
 from metrics.productivity import compute_productivity_index
 from metrics.growth import get_growth_trend_data
@@ -24,8 +30,68 @@ from metrics.clustering import cluster_employees
 from gamification import get_employee_gamification, get_leaderboard, get_level_info, get_xp_for_score
 from attendance import punch_in, punch_out, get_attendance_status
 from migrate_weights import run_migration
+<<<<<<< HEAD
+=======
+from migrate_phase4 import run_phase4_migration
+from backfill_scores import backfill_all_scores
+from metrics.clustering import run_performance_clustering
+from migrate_warehouse import run_warehouse_migration
+from migrate_phase6 import migrate as run_phase6_migration
+from etl_pipeline import run_etl
+>>>>>>> 55b7e13 (Removed JSON files containing secrets)
 
 app = FastAPI(title="PerformIQ API", version="1.0.0")
+
+from aggregation_job import run_weekly_aggregation, get_current_week
+import asyncio
+
+@app.middleware("http")
+async def require_firebase_auth(request: Request, call_next):
+    # Skip auth for these routes
+    open_paths = ["/docs", "/openapi.json", "/api/upload", "/api/admin/set-user-claims"]
+    if any(request.url.path.startswith(p) for p in open_paths) or request.method == "OPTIONS":
+        return await call_next(request)
+        
+    if not request.url.path.startswith("/api/"):
+        return await call_next(request)
+        
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+        
+    token = auth_header.split("Bearer ")[1]
+    
+    # Demo / quick-test bypass
+    if token == "demo-token":
+        request.state.user = {"uid": "demo", "role": "STORE_MANAGER", "storeId": "S001", "employeeId": "1"}
+        request.state.scoped_store_id = "S001"
+        return await call_next(request)
+    
+    try:
+        decoded = auth.verify_id_token(token)
+        request.state.user = decoded
+        role = decoded.get("role")
+        store_id = decoded.get("storeId")
+        
+        if role == 'STORE_MANAGER':
+            request.state.scoped_store_id = store_id
+        elif role == 'EMPLOYEE':
+            request.state.scoped_store_id = store_id
+        elif role == 'HEAD_OFFICE':
+            request.state.scoped_store_id = request.query_params.get("store_id")
+            
+        if request.url.path.startswith("/api/manager") and role not in ["STORE_MANAGER", "HEAD_OFFICE"]:
+            return JSONResponse(status_code=403, content={"error": "Forbidden - manager access required"})
+            
+        if request.url.path.startswith("/api/admin") and request.url.path != "/api/admin/set-user-claims" and role != "HEAD_OFFICE":
+            return JSONResponse(status_code=403, content={"error": "Forbidden - head office required"})
+
+        response = await call_next(request)
+        return response
+    except Exception as e:
+        print(f"Auth error: {e}")
+        return JSONResponse(status_code=401, content={"error": "Invalid token"})
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -86,8 +152,68 @@ class AuthRegister(BaseModel):
     name: str
     email: str
     role: str = "employee"
-    store_id: int = 1
+    store_id: str = "S001"
     department_id: int = 1
+
+# --- Admin Models ---
+class StoreCreate(BaseModel):
+    storeName: str
+    storeLocation: str
+    storeLat: float
+    storeLng: float
+    geofenceRadius: float = 100
+
+class StoreUpdate(BaseModel):
+    storeName: Optional[str] = None
+    storeLocation: Optional[str] = None
+    storeLat: Optional[float] = None
+    storeLng: Optional[float] = None
+    geofenceRadius: Optional[float] = None
+    isActive: Optional[bool] = None
+
+class EmployeeCreate(BaseModel):
+    name: str
+    department: str # Name or ID
+    storeId: str
+    shiftStartTime: str
+    email: str
+    temporaryPassword: str
+
+class EmployeeUpdate(BaseModel):
+    name: Optional[str] = None
+    department: Optional[str] = None
+    storeId: Optional[str] = None
+    shiftStartTime: Optional[str] = None
+    isActive: Optional[bool] = None
+
+class PasswordReset(BaseModel):
+    newPassword: str
+
+class TargetBulkEntry(BaseModel):
+    employeeId: int
+    targetAmount: float
+
+class TargetBulkSet(BaseModel):
+    weekNumber: int
+    year: int
+    targets: List[TargetBulkEntry]
+    setBy: str
+
+class ConfigUpdate(BaseModel):
+    value: str # JSON or Number
+    reason: str
+    effectiveFromWeek: Optional[int] = None
+    effectiveFromYear: Optional[int] = None
+
+class EmployeeRatingEntry(BaseModel):
+    employeeId: int
+    rating: int
+
+class RatingBulkSet(BaseModel):
+    date: str
+    storeId: str
+    ratings: List[EmployeeRatingEntry]
+    ratedBy: str
 
 
 @app.post("/api/auth/register")
@@ -104,10 +230,10 @@ async def register_user(data: AuthRegister):
     )
 
     return query(
-        """SELECT e.*, d.name as department_name, s.name as store_name
+        """SELECT e.*, d.name as department_name, s.store_name as store_name
            FROM employees e
            JOIN departments d ON e.department_id = d.id
-           JOIN stores s ON e.store_id = s.id
+           JOIN stores s ON e.store_id = s.store_id
            WHERE e.id = ?""",
         (employee_id,), one=True
     )
@@ -116,10 +242,10 @@ async def register_user(data: AuthRegister):
 @app.get("/api/auth/profile/{firebase_uid}")
 async def get_profile(firebase_uid: str):
     emp = query(
-        """SELECT e.*, d.name as department_name, s.name as store_name
+        """SELECT e.*, d.name as department_name, s.store_name as store_name
            FROM employees e
            JOIN departments d ON e.department_id = d.id
-           JOIN stores s ON e.store_id = s.id
+           JOIN stores s ON e.store_id = s.store_id
            WHERE e.firebase_uid = ?""",
         (firebase_uid,), one=True
     )
@@ -191,33 +317,41 @@ def has_active_punch_in(employee_id: int) -> bool:
 
 
 def check_for_flags(sale_revenue: float, num_items: int, employee_id: int) -> list:
+<<<<<<< HEAD
     """Run all 4 flag rules and return triggered flags."""
+=======
+    """Run flag rules and return triggered flags using DB thresholds."""
+    from config_service import get_config
+>>>>>>> 55b7e13 (Removed JSON files containing secrets)
     flags = []
 
     # RULE 1 — HIGH_SALE_AMOUNT
+    hsa_multiplier = get_config('FLAG_HIGH_SALE_MULTIPLIER')
     avg_sale = get_employee_avg_sale(employee_id)
-    if sale_revenue > avg_sale * 3:
+    if sale_revenue > avg_sale * hsa_multiplier:
         flags.append({
             "rule": "HIGH_SALE_AMOUNT",
-            "detail": f"Sale \u20b9{sale_revenue:.0f} is 3x above average \u20b9{avg_sale:.0f}"
+            "detail": f"Sale \u20b9{sale_revenue:.0f} is {hsa_multiplier}x above average \u20b9{avg_sale:.0f}"
         })
 
     # RULE 2 — HIGH_ITEM_COUNT
-    if num_items > 15:
+    hic_limit = get_config('FLAG_HIGH_ITEM_COUNT')
+    if num_items > hic_limit:
         flags.append({
             "rule": "HIGH_ITEM_COUNT",
-            "detail": f"{num_items} items in a single bill is unusually high"
+            "detail": f"{num_items} items in a single bill is above limit of {hic_limit}"
         })
 
     # RULE 3 — RAPID_SUBMISSION
+    rss_seconds = get_config('FLAG_RAPID_SUBMISSION_SECONDS')
     last_ts = get_last_sale_timestamp(employee_id)
     if last_ts is not None:
         now_ms = datetime.now().timestamp() * 1000
         diff_seconds = (now_ms - last_ts) / 1000
-        if diff_seconds < 120:
+        if diff_seconds < rss_seconds:
             flags.append({
                 "rule": "RAPID_SUBMISSION",
-                "detail": f"Submitted {int(diff_seconds)}s after previous sale"
+                "detail": f"Submitted {int(diff_seconds)}s after previous sale (Limit: {rss_seconds}s)"
             })
 
     # RULE 4 — NO_ACTIVE_SESSION
@@ -233,11 +367,13 @@ def check_for_flags(sale_revenue: float, num_items: int, employee_id: int) -> li
 # ==================== AUTO-CONFIRM TASK ====================
 
 async def auto_confirm_flagged_sales():
-    """Auto-confirm flagged sales older than 48 hours, runs every hour."""
+    """Auto-confirm flagged sales based on dynamic hours limit, runs every hour."""
+    from config_service import get_config
     while True:
         await asyncio.sleep(3600)  # every hour
         try:
-            cutoff = (datetime.now() - timedelta(hours=48)).strftime("%Y-%m-%d %H:%M:%S")
+            hours_limit = get_config('FLAG_AUTO_CONFIRM_HOURS')
+            cutoff = (datetime.now() - timedelta(hours=hours_limit)).strftime("%Y-%m-%d %H:%M:%S")
             now_iso = datetime.now().isoformat()
             stale = query(
                 """SELECT id FROM sales WHERE is_flagged = 1 AND resolved_by_admin = 0
@@ -251,7 +387,7 @@ async def auto_confirm_flagged_sales():
                     (now_iso, sale["id"]),
                 )
             if stale:
-                print(f"Auto-confirmed {len(stale)} flagged sales")
+                print(f"Auto-confirmed {len(stale)} flagged sales after {hours_limit}h")
         except Exception as e:
             print(f"Auto-confirm error: {e}")
 
@@ -260,6 +396,13 @@ async def auto_confirm_flagged_sales():
 async def startup():
     init_db()
     run_migration()
+<<<<<<< HEAD
+=======
+    run_phase4_migration()
+    run_warehouse_migration()
+    run_phase6_migration()
+    backfill_all_scores()
+>>>>>>> 55b7e13 (Removed JSON files containing secrets)
     asyncio.create_task(auto_confirm_flagged_sales())
 
 
@@ -365,7 +508,7 @@ async def review_sale(sale_id: int, review: ReviewAction):
 
 
 @app.get("/api/employees")
-async def list_employees(department_id: Optional[int] = None, store_id: Optional[int] = None, role: Optional[str] = None):
+async def list_employees(department_id: Optional[int] = None, store_id: Optional[str] = None, role: Optional[str] = None):
     """List all employees."""
     where, params = "WHERE 1=1", []
     if department_id:
@@ -379,10 +522,10 @@ async def list_employees(department_id: Optional[int] = None, store_id: Optional
         params.append(role)
 
     return query(
-        f"""SELECT e.*, d.name as department_name, s.name as store_name
+        f"""SELECT e.*, d.name as department_name, s.store_name as store_name
             FROM employees e 
             JOIN departments d ON e.department_id = d.id
-            JOIN stores s ON e.store_id = s.id
+            JOIN stores s ON e.store_id = s.store_id
             {where} ORDER BY e.name""",
         tuple(params),
     )
@@ -391,10 +534,10 @@ async def list_employees(department_id: Optional[int] = None, store_id: Optional
 @app.get("/api/employees/{employee_id}")
 async def get_employee(employee_id: int):
     emp = query(
-        """SELECT e.*, d.name as department_name, s.name as store_name
+        """SELECT e.*, d.name as department_name, s.store_name as store_name
            FROM employees e
            JOIN departments d ON e.department_id = d.id
-           JOIN stores s ON e.store_id = s.id
+           JOIN stores s ON e.store_id = s.store_id
            WHERE e.id = ?""",
         (employee_id,), one=True
     )
@@ -437,10 +580,11 @@ async def get_trends(
 
 @app.get("/api/leaderboard")
 async def leaderboard(
+    request: Request,
     department_id: Optional[int] = None,
-    store_id: Optional[int] = None,
     limit: int = 20,
 ):
+    store_id = getattr(request.state, "scoped_store_id", None)
     return get_leaderboard(department_id, store_id, limit)
 
 @app.get("/api/clustering")
@@ -595,7 +739,8 @@ async def submit_rating(rating: DailyRating):
 
 
 @app.get("/api/manager/attendance-overview")
-async def attendance_overview():
+async def attendance_overview(request: Request):
+    store_id = getattr(request.state, "scoped_store_id", "S001") or "S001"
     today = datetime.now().strftime("%Y-%m-%d")
     return query(
         """SELECT e.id, e.name, e.department_id, d.name as department_name,
@@ -610,17 +755,18 @@ async def attendance_overview():
 
 
 @app.get("/api/manager/pending-employees")
-async def pending_employees(store_id: Optional[int] = None):
+async def pending_employees(request: Request, store_id: Optional[str] = None):
+    store_id = getattr(request.state, "scoped_store_id", "S001") or "S001"
     where, params = "WHERE e.status = 'pending'", []
     if store_id:
         where += " AND e.store_id = ?"
         params.append(store_id)
         
     return query(
-        f"""SELECT e.*, d.name as department_name, s.name as store_name
+        f"""SELECT e.*, d.name as department_name, s.store_name as store_name
             FROM employees e
             JOIN departments d ON e.department_id = d.id
-            JOIN stores s ON e.store_id = s.id
+            JOIN stores s ON e.store_id = s.store_id
             {where} ORDER BY e.created_at DESC""",
         tuple(params),
     )
@@ -891,9 +1037,9 @@ async def employee_dashboard(employee_id: int):
     ws, we = get_date_range("weekly")
 
     emp = query(
-        """SELECT e.*, d.name as department_name, s.name as store_name
+        """SELECT e.*, d.name as department_name, s.store_name as store_name
            FROM employees e JOIN departments d ON e.department_id = d.id
-           JOIN stores s ON e.store_id = s.id WHERE e.id = ?""",
+           JOIN stores s ON e.store_id = s.store_id WHERE e.id = ?""",
         (employee_id,), one=True
     )
     if not emp:
@@ -932,10 +1078,10 @@ async def employee_dashboard(employee_id: int):
 
 
 @app.get("/api/dashboard/manager")
-async def manager_dashboard(store_id: int = 1):
+async def manager_dashboard(store_id: str = "S001"):
     ws, we = get_date_range("weekly")
 
-    departments = query("SELECT * FROM departments WHERE store_id = ?", (store_id,))
+    departments = query("SELECT * FROM departments WHERE store_id_text = ? OR store_id = ?", (store_id, store_id))
 
     dept_stats = []
     for dept in departments:
@@ -954,7 +1100,17 @@ async def manager_dashboard(store_id: int = 1):
         })
 
     review = await review_queue()
-    today_attendance = await attendance_overview()
+    today = datetime.now().strftime("%Y-%m-%d")
+    today_attendance = query(
+        """SELECT e.id, e.name, e.department_id, d.name as department_name,
+                  a.punch_in_time, a.punch_out_time, a.punch_in_status, a.hours_worked
+           FROM employees e
+           JOIN departments d ON e.department_id = d.id
+           LEFT JOIN attendance a ON e.id = a.employee_id AND a.attendance_date = ?
+           WHERE e.role = 'employee' AND e.is_active = 1 AND e.store_id = ?
+           ORDER BY e.name""",
+        (today, store_id),
+    )
 
     total_rev = sum(d["weekly_revenue"] for d in dept_stats)
     total_emp = sum(d["employee_count"] for d in dept_stats)
@@ -984,10 +1140,17 @@ async def employee_dashboard_v2(employee_id: int):
         emp = query(
             """SELECT e.id, e.name, e.total_xp, e.level, e.level_title,
                       d.name as department, d.weekly_revenue_target,
+<<<<<<< HEAD
                       s.name as store_name, s.shift_start_time, e.store_id
                FROM employees e
                JOIN departments d ON e.department_id = d.id
                JOIN stores s ON e.store_id = s.id
+=======
+                      s.store_name as store_name, e.store_id
+               FROM employees e
+               JOIN departments d ON e.department_id = d.id
+               JOIN stores s ON e.store_id = s.store_id
+>>>>>>> 55b7e13 (Removed JSON files containing secrets)
                WHERE e.id = ?""",
             (employee_id,), one=True
         )
@@ -1050,7 +1213,11 @@ async def employee_dashboard_v2(employee_id: int):
         # Streak data — last 28 days
         streak_data = []
         daily_target = weekly_target / 6 if weekly_target > 0 else 0
+<<<<<<< HEAD
         store_info = query("SELECT shift_start_time FROM stores WHERE id = ?", (emp["store_id"],), one=True)
+=======
+        store_info = query("SELECT shift_start_time FROM stores WHERE store_id = ?", (emp["store_id"],), one=True)
+>>>>>>> 55b7e13 (Removed JSON files containing secrets)
         shift_start = store_info["shift_start_time"] if store_info else "09:00"
 
         for i in range(27, -1, -1):
@@ -1164,14 +1331,25 @@ async def employee_dashboard_v2(employee_id: int):
 
 
 @app.get("/api/manager/store-overview")
+<<<<<<< HEAD
 async def store_overview(store_id: int = 1):
+=======
+async def store_overview(request: Request, store_id: Optional[str] = None):
+    """Returns key metrics for a specific store."""
+    if store_id is None:
+        store_id = getattr(request.state, "scoped_store_id", "S001") or "S001"
+>>>>>>> 55b7e13 (Removed JSON files containing secrets)
     """Returns all data needed for manager dashboard charts."""
     try:
         ws, we = get_date_range("weekly")
         today = datetime.now()
         week_number = today.isocalendar()[1]
 
+<<<<<<< HEAD
         store = query("SELECT id, name FROM stores WHERE id = ?", (store_id,), one=True)
+=======
+        store = query("SELECT store_id as id, store_name as name FROM stores WHERE store_id = ?", (store_id,), one=True)
+>>>>>>> 55b7e13 (Removed JSON files containing secrets)
         if not store:
             raise HTTPException(status_code=404, detail="Store not found")
 
@@ -1295,7 +1473,11 @@ async def store_overview(store_id: int = 1):
             })
 
         # Attendance matrix — last 28 days × all employees
+<<<<<<< HEAD
         store_shift = query("SELECT shift_start_time FROM stores WHERE id = ?", (store_id,), one=True)
+=======
+        store_shift = query("SELECT shift_start_time FROM stores WHERE store_id = ?", (store_id,), one=True)
+>>>>>>> 55b7e13 (Removed JSON files containing secrets)
         shift_time = store_shift["shift_start_time"] if store_shift else "09:00"
 
         attendance_matrix = []
@@ -1365,12 +1547,21 @@ async def store_overview(store_id: int = 1):
 
 
 @app.get("/api/manager/department-summary")
+<<<<<<< HEAD
 async def department_summary(store_id: int = 1):
+=======
+async def department_summary(request: Request):
+    store_id = getattr(request.state, "scoped_store_id", "S001") or "S001"
+>>>>>>> 55b7e13 (Removed JSON files containing secrets)
     """Returns department-level aggregates for comparison charts."""
     try:
         ws, we = get_date_range("weekly")
 
+<<<<<<< HEAD
         departments = query("SELECT id, name FROM departments WHERE store_id = ?", (store_id,))
+=======
+        departments = query("SELECT id, name FROM departments WHERE store_id_text = ? OR store_id = ?", (store_id, store_id))
+>>>>>>> 55b7e13 (Removed JSON files containing secrets)
 
         dept_data = []
         for dept in departments:
@@ -1431,3 +1622,1177 @@ async def department_summary(store_id: int = 1):
         return {"departments": dept_data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+<<<<<<< HEAD
+=======
+
+
+@app.get("/api/manager/available-weeks")
+async def get_available_weeks(request: Request):
+    store_id = getattr(request.state, "scoped_store_id", "S001") or "S001"
+    """Returns distinct week/year combos from weekly_scores."""
+    try:
+        weeks = query(
+            "SELECT DISTINCT week_number, year FROM weekly_scores ORDER BY year DESC, week_number DESC"
+        )
+        return weeks
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/manager/segmentation")
+async def get_manager_segmentation(request: Request, week: int,
+    year: int,
+    xMetric: str = "P_score",
+    yMetric: str = "M4",
+    department: Optional[str] = None):
+    store_id = getattr(request.state, "scoped_store_id", "S001") or "S001"
+    """Returns employee performance segmentation data (9-box + clusters)."""
+    try:
+        where_clause = "WHERE week_number = ? AND year = ? AND store_id = ?"
+        params = [week, year, store_id]
+        
+        if department and department != "All":
+            where_clause += " AND department = ?"
+            params.append(department)
+            
+        sql = f"SELECT * FROM weekly_scores {where_clause}"
+        scores = query(sql, tuple(params))
+        
+        if not scores:
+            return {"employees": [], "clusterCentroids": []}
+            
+        # Get employee names
+        emp_ids = [s["employee_id"] for s in scores]
+        placeholders = ",".join(["?"] * len(emp_ids))
+        names_map = {e["id"]: e["name"] for e in query(f"SELECT id, name FROM employees WHERE id IN ({placeholders})", tuple(emp_ids))}
+        
+        employees = []
+        for s in scores:
+            employees.append({
+                "id": str(s["employee_id"]),
+                "name": names_map.get(s["employee_id"], "Unknown"),
+                "department": s["department"],
+                "M1": s["M1"], "M2": s["M2"], "M3": s["M3"], "M4": s["M4"],
+                "M5": s["M5"], "M7": s["M7"], "M8": s["M8"], "P": s["P_score"],
+                "xValue": s.get(xMetric) if s.get(xMetric) is not None else s.get("P_score"),
+                "yValue": s.get(yMetric) if s.get(yMetric) is not None else s.get("M4"),
+            })
+            
+        # Run clustering on [M1, M2]
+        clustered_employees, centroids = run_performance_clustering(employees)
+        
+        return {
+            "employees": clustered_employees,
+            "clusterCentroids": centroids
+        }
+    except Exception as e:
+        print(f"Segmentation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ==================== HEAD OFFICE ENDPOINTS ====================
+
+@app.get("/api/headoffice/global-leaderboard")
+async def get_global_leaderboard():
+    """Ranked table of top 10 performers across all stores."""
+    try:
+        sql = """
+            SELECT 
+                e.name, 
+                s.store_name, 
+                e.store_id,
+                s.store_location,
+                e.department_id,
+                'Sales' as department,
+                ws.P_score, 
+                ws.M1 as revenue, 
+                e.level
+            FROM weekly_scores ws
+            JOIN employees e ON ws.employee_id = e.id
+            JOIN stores s ON e.store_id = s.store_id
+            ORDER BY ws.P_score DESC, ws.M1 DESC
+            LIMIT 10
+        """
+        results = query(sql)
+        for i, row in enumerate(results):
+            row["rank"] = i + 1
+        return results
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/headoffice/department-crossstore")
+async def get_dept_crossstore():
+    """Department performance comparison across all stores."""
+    try:
+        sql = """
+            SELECT 
+                s.store_id,
+                s.store_name,
+                ws.department,
+                AVG(ws.P_score) as avg_p_score,
+                AVG(ws.M2) as avg_basket,
+                COUNT(ws.employee_id) as headcount
+            FROM weekly_scores ws
+            JOIN employees e ON ws.employee_id = e.id
+            JOIN stores s ON e.store_id = s.store_id
+            GROUP BY s.store_id, ws.department
+        """
+        return query(sql)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/headoffice/alerts")
+async def get_global_alerts():
+    """Aggregated geofence and flagged sale alerts across all stores."""
+    try:
+        geofence = query("""
+            SELECT ga.*, s.store_name, e.name as employee_name
+            FROM geofence_alerts ga
+            JOIN employees e ON ga.employee_id = e.id
+            JOIN stores s ON e.store_id = s.store_id
+            WHERE ga.resolved_by_admin = 0
+            ORDER BY ga.created_at DESC
+        """)
+        
+        flagged = query("""
+            SELECT s.*, st.store_name, e.name as employee_name
+            FROM sales s
+            JOIN employees e ON s.employee_id = e.id
+            JOIN stores st ON e.store_id = st.store_id
+            WHERE s.is_flagged = 1 AND s.resolved_by_admin = 0
+            ORDER BY s.submitted_at DESC
+        """)
+        
+        return {
+            "geofence_alerts": geofence,
+            "flagged_sales": flagged,
+            "total_unresolved": len(geofence) + len(flagged)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/headoffice/store/{store_id}/overview")
+async def get_ho_store_overview(request: Request, store_id: str):
+    """Reuse manager store-overview logic for a specific store ID."""
+    try:
+        # Import store_overview locally if needed or just use it if available
+        return await store_overview(request, store_id=store_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ==================== ADMIN: STORE MANAGEMENT ====================
+
+@app.get("/api/admin/stores")
+async def admin_list_stores():
+    stores = query("""
+        SELECT s.*, 
+               (SELECT COUNT(*) FROM employees WHERE store_id = s.store_id AND is_active = 1) as employeeCount,
+               (SELECT email FROM employees WHERE store_id = s.store_id AND role = 'STORE_MANAGER' LIMIT 1) as managerEmail
+        FROM stores s
+    """)
+    
+    # Add setup checklist logic
+    res = []
+    for s in stores:
+        sid = s["store_id"]
+        has_employees = s["employeeCount"] > 0
+        has_manager = s["managerEmail"] is not None
+        
+        # Check targets for current week
+        cur_week = get_current_week()
+        has_targets = query("SELECT 1 FROM weekly_targets WHERE store_id = ? AND week_number = ? AND year = ?", 
+                           (sid, cur_week["week"], cur_week["year"]), one=True) is not None
+        
+        has_geofence = s["latitude"] != 0 and s["longitude"] != 0
+        
+        res.append({
+            **s,
+            "setupChecklist": {
+                "hasEmployees": has_employees,
+                "hasManager": has_manager,
+                "hasTargetsThisWeek": has_targets,
+                "geofenceConfigured": has_geofence
+            }
+        })
+    return {"stores": res}
+
+@app.post("/api/admin/stores")
+async def admin_create_store(data: StoreCreate):
+    # Auto-generate S00{n}
+    count = query("SELECT COUNT(*) as c FROM stores", one=True)["c"]
+    new_id = f"S{str(count + 1).zfill(3)}"
+    
+    execute("""
+        INSERT INTO stores (store_id, name, location, latitude, longitude, geofence_radius, is_active)
+        VALUES (?, ?, ?, ?, ?, ?, 1)
+    """, (new_id, data.storeName, data.storeLocation, data.storeLat, data.storeLng, data.geofenceRadius))
+    
+    return query("SELECT * FROM stores WHERE store_id = ?", (new_id,), one=True)
+
+@app.patch("/api/admin/stores/{store_id}")
+async def admin_update_store(store_id: str, data: StoreUpdate):
+    for field, value in data.dict(exclude_unset=True).items():
+        db_field = {
+            "storeName": "name",
+            "storeLocation": "location",
+            "storeLat": "latitude",
+            "storeLng": "longitude",
+            "geofenceRadius": "geofence_radius",
+            "isActive": "is_active"
+        }.get(field, field)
+        
+        execute(f"UPDATE stores SET {db_field} = ? WHERE store_id = ?", (value, store_id))
+    
+    return query("SELECT * FROM stores WHERE store_id = ?", (store_id,), one=True)
+
+
+# ==================== ADMIN: EMPLOYEE MANAGEMENT ====================
+
+@app.get("/api/admin/employees")
+async def admin_list_employees(store: Optional[str] = None, dept: Optional[str] = None, status: str = "active"):
+    where = "WHERE 1=1"
+    params = []
+    if store:
+        where += " AND e.store_id = ?"
+        params.append(store)
+    if dept:
+        where += " AND d.name = ?"
+        params.append(dept)
+    if status == "active":
+        where += " AND e.is_active = 1"
+        
+    employees = query(f"""
+        SELECT e.*, d.name as department, s.name as storeName,
+               (SELECT p_score FROM weekly_scores 
+                WHERE employee_id = e.id 
+                ORDER BY year DESC, week_number DESC LIMIT 1) as currentWeekPScore
+        FROM employees e
+        JOIN departments d ON e.department_id = d.id
+        JOIN stores s ON e.store_id = s.store_id
+        {where}
+    """, tuple(params))
+    
+    return {"employees": employees, "total": len(employees)}
+
+@app.post("/api/admin/employees")
+async def admin_create_employee(data: EmployeeCreate):
+    # 1. Generate employeeId (E{storeId}{next_n})
+    count = query("SELECT COUNT(*) as c FROM employees WHERE store_id = ?", (data.storeId,), one=True)["c"]
+    emp_id_str = f"E{data.storeId[1:]}{str(count + 1).zfill(3)}"
+    
+    # 2. Map department string to ID
+    dept = query("SELECT id FROM departments WHERE name = ?", (data.department,), one=True)
+    dept_id = dept["id"] if dept else 1
+    
+    try:
+        # 3. Create Firebase user
+        fb_user = auth.create_user(
+            email=data.email,
+            password=data.temporaryPassword,
+            display_name=data.name
+        )
+        
+        # 4. Set custom claims
+        role = "EMPLOYEE" # Admin can change this later via set-user-claims
+        auth.set_custom_user_claims(fb_user.uid, {
+            "role": role,
+            "storeId": data.storeId,
+            "employeeId": emp_id_str
+        })
+        
+        # 5. DB Insert
+        new_id = execute("""
+            INSERT INTO employees (name, email, firebase_uid, role, store_id, department_id, 
+                                 shift_start_time, employee_id_str, is_active, total_xp, level)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 1)
+        """, (data.name, data.email, fb_user.uid, role.lower(), data.storeId, dept_id, 
+              data.shift_startTime, emp_id_str))
+        
+        return {
+            "employeeId": emp_id_str,
+            "firebaseUid": fb_user.uid,
+            "id": new_id,
+            "name": data.name
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.patch("/api/admin/employees/{id}")
+async def admin_update_employee(id: int, data: EmployeeUpdate):
+    emp = query("SELECT firebase_uid, store_id, role, employee_id_str FROM employees WHERE id = ?", (id,), one=True)
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found")
+        
+    claims_updated = False
+    new_store_id = emp["store_id"]
+    
+    for field, value in data.dict(exclude_unset=True).items():
+        if field == "department":
+            dept = query("SELECT id FROM departments WHERE name = ?", (value,), one=True)
+            execute("UPDATE employees SET department_id = ? WHERE id = ?", (dept["id"] if dept else 1, id))
+        elif field == "storeId":
+            execute("UPDATE employees SET store_id = ? WHERE id = ?", (value, id))
+            new_store_id = value
+            claims_updated = True
+        elif field == "shiftStartTime":
+            execute("UPDATE employees SET shift_start_time = ? WHERE id = ?", (value, id))
+        elif field == "isActive":
+            execute("UPDATE employees SET is_active = ? WHERE id = ?", (1 if value else 0, id))
+        elif field == "name":
+            execute("UPDATE employees SET name = ? WHERE id = ?", (value, id))
+            
+    if claims_updated:
+        auth.set_custom_user_claims(emp["firebase_uid"], {
+            "role": emp["role"].upper(),
+            "storeId": new_store_id,
+            "employeeId": emp["employee_id_str"]
+        })
+        
+    return {"success": True}
+
+@app.post("/api/admin/employees/{id}/reset-password")
+async def admin_reset_password(id: int, data: PasswordReset):
+    emp = query("SELECT firebase_uid FROM employees WHERE id = ?", (id,), one=True)
+    if not emp:
+        raise HTTPException(status_code=404, detail="Employee not found")
+        
+    auth.update_user(emp["firebase_uid"], password=data.newPassword)
+    return {"success": True}
+
+
+# ==================== ADMIN: WEEKLY TARGETS ====================
+
+@app.get("/api/admin/targets")
+async def admin_list_targets(store: Optional[str] = None, week: int = None, year: int = None):
+    cw = week or get_current_week()["week"]
+    cy = year or get_current_week()["year"]
+    
+    where = "WHERE 1=1"
+    params = [cw, cy]
+    if store:
+        where += " AND e.store_id = ?"
+        params.append(store)
+        
+    targets = query(f"""
+        SELECT t.*, e.name as employeeName, d.name as department, s.name as storeName,
+               (SELECT target_amount FROM weekly_targets 
+                WHERE employee_id = e.id AND (year < ? OR (year = ? AND week_number < ?))
+                ORDER BY year DESC, week_number DESC LIMIT 1) as lastWeekTarget,
+               (SELECT revenue FROM weekly_scores 
+                WHERE employee_id = e.id AND (year < ? OR (year = ? AND week_number < ?))
+                ORDER BY year DESC, week_number DESC LIMIT 1) as lastWeekRevenue,
+               (SELECT p_score FROM weekly_scores 
+                WHERE employee_id = e.id AND (year < ? OR (year = ? AND week_number < ?))
+                ORDER BY year DESC, week_number DESC LIMIT 1) as lastWeekPScore
+        FROM employees e
+        LEFT JOIN weekly_targets t ON e.id = t.employee_id AND t.week_number = ? AND t.year = ?
+        JOIN departments d ON e.department_id = d.id
+        JOIN stores s ON e.store_id = s.store_id
+        {where} AND e.is_active = 1
+    """, (cy, cy, cw, cy, cy, cw, cy, cy, cw, cw, cy, *params))
+    
+    # Filter unset
+    unset = [t for t in targets if t["target_amount"] is None]
+    
+    return {
+        "weekNumber": cw,
+        "year": cy,
+        "targets": [t for t in targets if t["target_amount"] is not None],
+        "unsetEmployees": unset
+    }
+
+@app.post("/api/admin/targets/bulk")
+async def admin_bulk_set_targets(data: TargetBulkSet):
+    count = 0
+    now = datetime.now().isoformat()
+    for t in data.targets:
+        # Get store_id for employee
+        emp = query("SELECT store_id FROM employees WHERE id = ?", (t.employeeId,), one=True)
+        if not emp: continue
+        
+        execute("""
+            INSERT OR REPLACE INTO weekly_targets 
+            (target_id, employee_id, store_id, week_number, year, target_amount, set_by, set_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (str(uuid.uuid4()), t.employeeId, emp["store_id"], data.weekNumber, data.year, t.targetAmount, data.setBy, now))
+        count += 1
+    return {"count": count}
+
+@app.post("/api/admin/targets/copy-last-week")
+async def admin_copy_targets(storeId: Optional[str] = None):
+    cw = get_current_week()["week"]
+    cy = get_current_week()["year"]
+    
+    # Simple logic: find previous week targets
+    prev_w = cw - 1 if cw > 1 else 52
+    prev_y = cy if cw > 1 else cy - 1
+    
+    where = "WHERE week_number = ? AND year = ?"
+    params = [prev_w, prev_y]
+    if storeId:
+        where += " AND store_id = ?"
+        params.append(storeId)
+        
+    prev_targets = query(f"SELECT employee_id, store_id, target_amount FROM weekly_targets {where}", tuple(params))
+    
+    count = 0
+    now = datetime.now().isoformat()
+    for t in prev_targets:
+        # Skip if already exists
+        exists = query("SELECT 1 FROM weekly_targets WHERE employee_id = ? AND week_number = ? AND year = ?", 
+                      (t["employee_id"], cw, cy), one=True)
+        if exists: continue
+        
+        execute("""
+            INSERT INTO weekly_targets (target_id, employee_id, store_id, week_number, year, target_amount, set_by, set_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'SYSTEM_COPY', ?)
+        """, (str(uuid.uuid4()), t["employee_id"], t["store_id"], cw, cy, t["target_amount"], now))
+        count += 1
+        
+    return {"count": count}
+
+@app.get("/api/admin/targets/fairness-check")
+async def admin_targets_fairness(week: int, year: int):
+    targets = query("""
+        SELECT t.*, e.name, d.name as department, e.store_id
+        FROM weekly_targets t
+        JOIN employees e ON t.employee_id = e.id
+        JOIN departments d ON e.department_id = d.id
+        WHERE t.week_number = ? AND t.year = ?
+    """, (week, year))
+    
+    # Calculate dept averages
+    depts = {}
+    for t in targets:
+        key = (t["department"], t["store_id"])
+        if key not in depts: depts[key] = []
+        depts[key].append(t["target_amount"])
+        
+    dept_avgs = []
+    for (d, s), vals in depts.items():
+        dept_avgs.append({"department": d, "storeId": s, "avgTarget": sum(vals)/len(vals)})
+        
+    warnings = []
+    for t in targets:
+        avg = next(a["avgTarget"] for a in dept_avgs if a["department"] == t["department"] and a["storeId"] == t["store_id"])
+        ratio = t["target_amount"] / avg if avg > 0 else 1
+        if ratio > 2.0:
+            warnings.append({**t, "deptAvgTarget": avg, "ratio": ratio, "warning": f"Target is {ratio:.1f}x dept average"})
+        elif ratio < 0.5:
+            warnings.append({**t, "deptAvgTarget": avg, "ratio": ratio, "warning": f"Target is only {ratio:.1f}x dept average"})
+            
+    return {"warnings": warnings, "deptAverages": dept_avgs}
+
+
+# ==================== ADMIN: SYSTEM CONFIG ====================
+
+@app.get("/api/admin/config")
+async def admin_get_config():
+    from config_service import get_config
+    # Invalidate cache first to get fresh for admin
+    from config_service import invalidate_cache
+    invalidate_cache()
+    
+    configs = query("SELECT * FROM system_config")
+    res = []
+    for c in configs:
+        val = c["config_value"]
+        if c["config_type"] == "JSON": val = json.loads(val)
+        elif c["config_type"] == "NUMBER": val = float(val)
+        elif c["config_type"] == "BOOLEAN": val = val.lower() == "true"
+        
+        res.append({
+            "key": c["config_key"],
+            "value": val,
+            "type": c["config_type"],
+            "description": c["description"],
+            "lastUpdatedBy": c["last_updated_by"],
+            "lastUpdatedAt": c["last_updated_at"]
+        })
+    return {"config": res}
+
+@app.patch("/api/admin/config/{key}")
+async def admin_update_config(key: str, data: ConfigUpdate):
+    # Validation for METRIC_WEIGHTS
+    if key == "METRIC_WEIGHTS":
+        weights = json.loads(data.value)
+        total = sum(weights.values())
+        if abs(total - 1.0) > 0.001:
+            raise HTTPException(status_code=400, detail=f"Weights must sum to 1.00. Current sum: {total:.3f}")
+            
+    from config_service import update_config_db
+    update_config_db(key, data.value, data.reason, data.reason, data.effectiveFromWeek, data.effectiveFromYear)
+    
+    return {"success": True}
+
+@app.get("/api/admin/config/history/{key}")
+async def admin_config_history(key: str):
+    history = query("SELECT * FROM system_config_history WHERE config_key = ? ORDER BY changed_at DESC", (key,))
+    return {"key": key, "history": history}
+
+
+# ==================== ADMIN: RAW DATA & EXPORTS ====================
+
+@app.get("/api/admin/data/sales")
+async def admin_data_sales(
+    store: Optional[str] = None,
+    employee: Optional[int] = None,
+    start_date: str = Query(None, alias="from"),
+    end_date: str = Query(None, alias="to"),
+    flagged: str = "all",
+    page: int = 1,
+    limit: int = 50
+):
+    where = "WHERE 1=1"
+    params = []
+    if store:
+        where += " AND e.store_id = ?"
+        params.append(store)
+    if employee:
+        where += " AND s.employee_id = ?"
+        params.append(employee)
+    if start_date and end_date:
+        where += " AND s.sale_date BETWEEN ? AND ?"
+        params.extend([start_date, end_date])
+    if flagged == "true":
+        where += " AND s.is_flagged = 1"
+    elif flagged == "false":
+        where += " AND s.is_flagged = 0"
+        
+    offset = (page - 1) * limit
+    sales = query(f"""
+        SELECT s.*, e.name as employeeName, st.name as storeName, d.name as department
+        FROM sales s
+        JOIN employees e ON s.employee_id = e.id
+        JOIN stores st ON e.store_id = st.store_id
+        JOIN departments d ON e.department_id = d.id
+        {where} ORDER BY s.submitted_at DESC LIMIT ? OFFSET ?
+    """, (*params, limit, offset))
+    
+    total = query(f"SELECT COUNT(*) as c FROM sales s JOIN employees e ON s.employee_id = e.id {where}", tuple(params))["c"]
+    
+    return {
+        "sales": sales,
+        "total": total,
+        "page": page,
+        "totalPages": (total + limit - 1) // limit
+    }
+
+@app.get("/api/admin/data/weekly-scores")
+async def admin_data_scores(store: Optional[str] = None, week: int = None, year: int = None):
+    where = "WHERE 1=1"
+    params = []
+    if store:
+        where += " AND e.store_id = ?"
+        params.append(store)
+    if week and year:
+        where += " AND ws.week_number = ? AND ws.year = ?"
+        params.extend([week, year])
+        
+    scores = query(f"""
+        SELECT ws.*, e.name as employeeName, st.name as storeName, d.name as department
+        FROM weekly_scores ws
+        JOIN employees e ON ws.employee_id = e.id
+        JOIN stores st ON e.store_id = st.store_id
+        JOIN departments d ON e.department_id = d.id
+        {where} ORDER BY ws.year DESC, ws.week_number DESC, ws.p_score DESC
+    """, tuple(params))
+    return {"scores": scores}
+
+@app.get("/api/admin/data/attendance")
+async def admin_data_attendance(store: Optional[str] = None, start_date: str = Query(None, alias="from"), end_date: str = Query(None, alias="to")):
+    where = "WHERE 1=1"
+    params = []
+    if store:
+        where += " AND e.store_id = ?"
+        params.append(store)
+    if start_date and end_date:
+        where += " AND a.attendance_date BETWEEN ? AND ?"
+        params.extend([start_date, end_date])
+        
+    records = query(f"""
+        SELECT a.*, e.name as employeeName, st.name as storeName
+        FROM attendance a
+        JOIN employees e ON a.employee_id = e.id
+        JOIN stores st ON e.store_id = st.store_id
+        {where} ORDER BY a.attendance_date DESC
+    """, tuple(params))
+    return {"records": records}
+
+
+# --- CSV Stream Generation ---
+def generate_csv(df):
+    from io import StringIO
+    output = StringIO()
+    df.to_csv(output, index=False)
+    return output.getvalue()
+
+@app.get("/api/admin/export/sales")
+async def admin_export_sales(store: Optional[str] = None, from_date: str = Query(None, alias="from"), to_date: str = Query(None, alias="to")):
+    import pandas as pd
+    data = (await admin_data_sales(store=store, start_date=from_date, end_date=to_date, limit=10000))["sales"]
+    df = pd.DataFrame(data)
+    if not df.empty:
+        # Cleanup for CSV
+        df = df[["id", "employee_id", "employeeName", "storeName", "department", "revenue", "num_items", "basketSize", "is_flagged", "flags", "admin_action", "sale_date"]]
+    
+    csv_content = generate_csv(df)
+    return StreamingResponse(
+        iter([csv_content]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=performiq_sales_{datetime.now().strftime('%Y%m%d')}.csv"}
+    )
+
+@app.get("/api/admin/export/weekly-scores")
+async def admin_export_scores(store: Optional[str] = None, week: int = None, year: int = None):
+    import pandas as pd
+    data = (await admin_data_scores(store=store, week=week, year=year))["scores"]
+    df = pd.DataFrame(data)
+    if not df.empty:
+        df = df[["employee_id", "employeeName", "storeName", "department", "week_number", "year", "p_score", "revenue", "avg_basket_size", "total_bills", "xp_earned"]]
+    
+    csv_content = generate_csv(df)
+    return StreamingResponse(
+        iter([csv_content]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=performiq_scores_{datetime.now().strftime('%Y%m%d')}.csv"}
+    )
+
+@app.get("/api/admin/data/health-check")
+async def admin_health_check():
+    warnings = []
+    cw = get_current_week()
+    stores = query("SELECT store_id, name FROM stores WHERE is_active = 1")
+    
+    for s in stores:
+        sid = s["store_id"]
+        
+        # 1. Missing targets
+        missing_targets = query("""
+            SELECT COUNT(*) as c FROM employees e 
+            WHERE e.store_id = ? AND e.role = 'employee' AND e.is_active = 1
+            AND NOT EXISTS (SELECT 1 FROM weekly_targets t WHERE t.employee_id = e.id AND t.week_number = ? AND t.year = ?)
+        """, (sid, cw["week"], cw["year"]), one=True)["c"]
+        if missing_targets > 0:
+            warnings.append({
+                "type": "MISSING_TARGETS", "storeId": sid, "storeName": s["name"],
+                "detail": f"{missing_targets} employees have no targets set", "affectedCount": missing_targets, "weekNumber": cw["week"]
+            })
+            
+        # 2. Missing ratings today
+        today = datetime.now().strftime("%Y-%m-%d")
+        missing_ratings = query("""
+            SELECT COUNT(*) as c FROM employees e 
+            WHERE e.store_id = ? AND e.role = 'employee' AND e.is_active = 1
+            AND NOT EXISTS (SELECT 1 FROM manager_ratings r WHERE r.employee_id = e.id AND r.rating_date = ?)
+        """, (sid, today), one=True)["c"]
+        if missing_ratings > 0:
+            warnings.append({
+                "type": "MISSING_RATINGS", "storeId": sid, "storeName": s["name"],
+                "detail": f"{missing_ratings} employees not rated today", "affectedCount": missing_ratings, "weekNumber": cw["week"]
+            })
+            
+    return {
+        "warnings": warnings,
+        "totalWarnings": len(warnings),
+        "lastAggregationRan": query("SELECT MAX(aggregated_at) as m FROM store_weekly_summary", one=True)["m"]
+    }
+
+
+# ==================== ADMIN: RATING MANAGEMENT ====================
+
+@app.get("/api/admin/ratings/status")
+async def admin_ratings_status(date: str = None):
+    check_date = date or datetime.now().strftime("%Y-%m-%d")
+    stores = query("SELECT store_id, name FROM stores WHERE is_active = 1")
+    
+    store_statuses = []
+    for s in stores:
+        sid = s["store_id"]
+        employees = query("SELECT id, name, department_id FROM employees WHERE store_id = ? AND role = 'employee' AND is_active = 1", (sid,))
+        total = len(employees)
+        
+        rated = query("""
+            SELECT r.employee_id, e.name, d.name as department, r.rating 
+            FROM manager_ratings r 
+            JOIN employees e ON r.employee_id = e.id
+            JOIN departments d ON e.department_id = d.id
+            WHERE e.store_id = ? AND r.rating_date = ?
+        """, (sid, check_date))
+        
+        rated_ids = [r["employee_id"] for r in rated]
+        unrated = [e for e in employees if e["id"] not in rated_ids]
+        
+        # Variance warning
+        import numpy as np
+        variant_warning = False
+        if len(rated) > 2:
+            std = np.std([r["rating"] for r in rated])
+            if std < 0.3: variant_warning = True
+            
+        store_statuses.append({
+            "storeId": sid, "storeName": s["name"],
+            "totalEmployees": total, "ratedToday": len(rated),
+            "unratedEmployees": unrated,
+            "completionPercent": (len(rated)/total * 100) if total > 0 else 0,
+            "varianceWarning": variant_warning
+        })
+        
+    return {"date": check_date, "stores": store_statuses}
+
+@app.post("/api/admin/ratings/bulk")
+async def admin_bulk_rate(data: RatingBulkSet):
+    count = 0
+    for r in data.ratings:
+        execute("""
+            INSERT OR REPLACE INTO manager_ratings (employee_id, rating, rating_date, rated_by, created_at)
+            VALUES (?, ?, ?, ?, datetime('now'))
+        """, (r.employeeId, r.rating, data.date, data.ratedBy))
+        count += 1
+    return {"count": count}
+
+# ==================== AUTHENTICATION & CLAIMS ====================
+
+@app.post("/api/admin/set-user-claims")
+async def set_user_claims(request: Request):
+    """Administrative endpoint to assign roles and store scoping to Firebase users."""
+    try:
+        data = await request.json()
+        uid = data.get("uid")
+        role = data.get("role") # HEAD_OFFICE, STORE_MANAGER, EMPLOYEE
+        store_id = data.get("storeId")
+        employee_id = data.get("employeeId")
+        
+        if not uid or not role:
+            raise HTTPException(status_code=400, detail="UID and Role are required")
+            
+        # Set custom claims in Firebase
+        claims = {
+            "role": role,
+            "storeId": store_id,
+            "employeeId": employee_id
+        }
+        auth.set_custom_user_claims(uid, claims)
+        
+        return {"success": True, "uid": uid, "claims": claims}
+    except Exception as e:
+        print(f"Error setting claims: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ==================== EMPLOYEE TRAJECTORY ====================
+@app.get("/api/manager/employee-trajectories")
+async def get_employee_trajectories(request: Request, store_id: Optional[str] = None, weeks: int = 8):
+    # If store_id not provided, use scoped_store_id from middleware
+    sid = store_id or getattr(request.state, "scoped_store_id", "S001")
+    
+    # Calculate this from the sales table directly for precision
+    cw, cy = get_current_week()
+    
+    # Fetch sales for the last N weeks
+    start_date = (datetime.now() - timedelta(weeks=weeks)).strftime("%Y-%m-%d")
+    
+    sales_data = query("""
+        SELECT 
+            e.id, e.name, d.name as department, 
+            s.revenue, s.sale_date
+        FROM sales s
+        JOIN employees e ON s.employee_id = e.id
+        JOIN departments d ON e.department_id = d.id
+        WHERE e.store_id = ? AND s.sale_date >= ? AND s.status = 'approved'
+    """, (sid, start_date))
+    
+    trajectories = {}
+    for row in sales_data:
+        eid = row['id']
+        if eid not in trajectories:
+            trajectories[eid] = {
+                "name": row['name'],
+                "department": row['department'],
+                "weeklyData": {}
+            }
+        
+        # Get week number from date
+        dt = datetime.strptime(row['sale_date'], "%Y-%m-%d")
+        w_key = f"W{dt.isocalendar()[1]} {dt.year}"
+        
+        if w_key not in trajectories[eid]["weeklyData"]:
+            trajectories[eid]["weeklyData"][w_key] = 0
+        trajectories[eid]["weeklyData"][w_key] += row['revenue']
+        
+    # Format for frontend
+    result = []
+    all_weeks = []
+    for i in range(weeks):
+        d = datetime.now() - timedelta(weeks=i)
+        all_weeks.append(f"W{d.isocalendar()[1]} {d.year}")
+    all_weeks.reverse()
+    
+    for eid, data in trajectories.items():
+        points = []
+        for w in all_weeks:
+            points.append({
+                "week": w,
+                "revenue": data["weeklyData"].get(w, 0)
+            })
+        result.append({
+            "employeeId": eid,
+            "name": data["name"],
+            "department": data["department"],
+            "data": points
+        })
+        
+    return result
+
+# ==================== DATA WAREHOUSE API ====================
+
+@app.get("/api/warehouse/store-summary")
+async def wh_store_summary(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+):
+    """Store summary from wh_store_summary, filterable by date range."""
+    if not start_date:
+        start_date = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+    if not end_date:
+        end_date = datetime.now().strftime("%Y-%m-%d")
+
+    rows = query(
+        """SELECT ws.*, s.store_name
+           FROM wh_store_summary ws
+           JOIN stores s ON ws.store_id = s.store_id
+           WHERE ws.date BETWEEN ? AND ?
+           ORDER BY ws.date DESC, ws.store_id""",
+        (start_date, end_date),
+    )
+    return {"startDate": start_date, "endDate": end_date, "rows": rows}
+
+
+@app.get("/api/warehouse/employee-facts")
+async def wh_employee_facts(
+    store_id: Optional[str] = None,
+    department: Optional[str] = None,
+    date: Optional[str] = None,
+):
+    """Employee fact table, searchable by store and department."""
+    target = date or (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    where = "WHERE wf.date = ?"
+    params: list = [target]
+
+    if store_id:
+        where += " AND wf.store_id = ?"
+        params.append(store_id)
+    if department:
+        where += " AND wf.department = ?"
+        params.append(department)
+
+    rows = query(
+        f"""SELECT wf.*, e.name as employee_name, s.store_name
+            FROM wh_employee_fact wf
+            JOIN employees e ON wf.employee_id = e.id
+            JOIN stores s ON wf.store_id = s.store_id
+            {where}
+            ORDER BY wf.p_score DESC""",
+        tuple(params),
+    )
+    return {"date": target, "rows": rows}
+
+
+@app.get("/api/warehouse/dept-benchmarks")
+async def wh_dept_benchmarks(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+):
+    """Department benchmarks with cross-store ranking."""
+    if not start_date:
+        start_date = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+    if not end_date:
+        end_date = datetime.now().strftime("%Y-%m-%d")
+
+    rows = query(
+        """SELECT db.*, s.store_name
+           FROM wh_dept_benchmark db
+           JOIN stores s ON db.store_id = s.store_id
+           WHERE db.date BETWEEN ? AND ?
+           ORDER BY db.department, db.dept_rank""",
+        (start_date, end_date),
+    )
+    return {"startDate": start_date, "endDate": end_date, "rows": rows}
+
+
+@app.get("/api/warehouse/flag-summary")
+async def wh_flag_summary(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+):
+    """Flag type breakdown per store."""
+    if not start_date:
+        start_date = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+    if not end_date:
+        end_date = datetime.now().strftime("%Y-%m-%d")
+
+    rows = query(
+        """SELECT fl.*, s.store_name
+           FROM wh_flag_log fl
+           JOIN stores s ON fl.store_id = s.store_id
+           WHERE fl.date BETWEEN ? AND ?
+           ORDER BY fl.date DESC, fl.store_id""",
+        (start_date, end_date),
+    )
+    return {"startDate": start_date, "endDate": end_date, "rows": rows}
+
+
+@app.get("/api/warehouse/etl-runs")
+async def wh_etl_runs(limit: int = 20):
+    """Last N ETL runs with status."""
+    rows = query(
+        "SELECT * FROM etl_runs ORDER BY run_at DESC LIMIT ?",
+        (limit,),
+    )
+    return {"runs": rows}
+
+
+@app.post("/api/warehouse/run-etl")
+async def wh_trigger_etl(request: Request):
+    """Manually trigger ETL pipeline."""
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+
+    target_date = data.get("date", None)
+    try:
+        run_etl(target_date)
+        return {"success": True, "message": "ETL completed", "ranAt": datetime.now().isoformat()}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# ==================== WAREHOUSE & AGGREGATION ====================
+
+@app.post("/api/admin/run-aggregation")
+async def trigger_aggregation(request: Request):
+    """Manual trigger for data warehouse aggregation."""
+    try:
+        data = await request.json()
+    except:
+        data = {}
+    
+    cw, cy = get_current_week()
+    week = data.get("weekNumber", cw)
+    year = data.get("year", cy)
+    
+    # Run in thread if it takes too long, but for now just await
+    run_weekly_aggregation(week, year)
+    
+    return {
+        "success": True,
+        "weekNumber": week,
+        "year": year,
+        "ranAt": datetime.now().isoformat()
+    }
+
+@app.get("/api/headoffice/warehouse/overview")
+async def get_warehouse_overview(week: int = None, year: int = None):
+    cw, cy = get_current_week()
+    w = week or cw
+    y = year or cy
+    
+    sql = """
+        SELECT 
+            sws.*, 
+            cwc.store_rank, cwc.revenue_rank, cwc.attendance_rank,
+            s.store_name, s.store_location
+        FROM store_weekly_summary sws
+        JOIN cross_store_weekly_comparison cwc ON sws.store_id = cwc.store_id 
+            AND sws.week_number = cwc.week_number AND sws.year = cwc.year
+        JOIN stores s ON sws.store_id = s.store_id
+        WHERE sws.week_number = ? AND sws.year = ?
+    """
+    results = query(sql, (w, y))
+    return {
+        "weekNumber": w,
+        "year": y,
+        "stores": results
+    }
+
+@app.get("/api/headoffice/warehouse/trends")
+async def get_warehouse_trends(weeks: int = 8):
+    weeks = min(max(weeks, 1), 12)
+    cw, cy = get_current_week()
+    
+    # Get last N weeks
+    trend_data = query("""
+        SELECT 
+            sws.store_id, s.store_name, sws.week_number, sws.year,
+            sws.avg_p_score, sws.total_revenue, sws.avg_attendance_rate,
+            cwc.store_rank
+        FROM store_weekly_summary sws
+        JOIN stores s ON sws.store_id = s.store_id
+        JOIN cross_store_weekly_comparison cwc ON sws.store_id = cwc.store_id 
+            AND sws.week_number = cwc.week_number AND sws.year = cwc.year
+        ORDER BY sws.year DESC, sws.week_number DESC
+        LIMIT ?
+    """, (weeks * 3,)) # 3 stores
+    
+    stores_map = {}
+    for row in trend_data:
+        sid = row['store_id']
+        if sid not in stores_map:
+            stores_map[sid] = {"storeId": sid, "storeName": row['store_name'], "trend": []}
+        
+        stores_map[sid]["trend"].append({
+            "week": f"W{row['week_number']} {row['year']}",
+            "weekNumber": row['week_number'],
+            "year": row['year'],
+            "avgPScore": row['avg_p_score'],
+            "totalRevenue": row['total_revenue'],
+            "avgAttendance": row['avg_attendance_rate'],
+            "storeRank": row['store_rank']
+        })
+        
+    # Reverse trends for chronological display
+    for sid in stores_map:
+        stores_map[sid]["trend"].reverse()
+        
+    return {
+        "weeks": sorted(list(set(f"W{r['week_number']} {r['year']}" for r in trend_data))),
+        "stores": list(stores_map.values())
+    }
+
+@app.get("/api/headoffice/warehouse/departments")
+async def get_warehouse_departments(week: int = None, year: int = None):
+    cw, cy = get_current_week()
+    w = week or cw
+    y = year or cy
+    
+    stats = query("""
+        SELECT dws.*, s.store_name
+        FROM department_weekly_summary dws
+        JOIN stores s ON dws.store_id = s.store_id
+        WHERE dws.week_number = ? AND dws.year = ?
+    """, (w, y))
+    
+    stores_data = {}
+    for row in stats:
+        sid = row['store_id']
+        if sid not in stores_data:
+            stores_data[sid] = {"storeId": sid, "storeName": row['store_name'], "departments": []}
+        
+        stores_data[sid]["departments"].append({
+            "department": row['department'],
+            "avgPScore": row['dept_avg_p_score'],
+            "avgRevenue": row['dept_avg_revenue'],
+            "avgBasketSize": row['dept_avg_basket_size'],
+            "avgAttendance": row['dept_avg_attendance'],
+            "headcount": row['headcount'],
+            "employees_above_target": row['employees_above_target']
+        })
+        
+    return {
+        "weekNumber": w,
+        "year": y,
+        "departments": ["Women's Wear", "Men's Wear", "Accessories"],
+        "stores": list(stores_data.values())
+    }
+
+@app.get("/api/headoffice/warehouse/store-ranking-history")
+async def get_ranking_history(weeks: int = 8):
+    cw, cy = get_current_week()
+    history = query("""
+        SELECT 
+            cwc.week_number, cwc.year, cwc.store_id, s.store_name, 
+            cwc.store_rank, cwc.avg_p_score, cwc.total_revenue
+        FROM cross_store_weekly_comparison cwc
+        JOIN stores s ON cwc.store_id = s.store_id
+        ORDER BY cwc.year DESC, cwc.week_number DESC
+        LIMIT ?
+    """, (weeks * 3,))
+    
+    stores_map = {}
+    for row in history:
+        sid = row['store_id']
+        if sid not in stores_map:
+            stores_map[sid] = {"storeId": sid, "storeName": row['store_name'], "rankHistory": []}
+        
+        stores_map[sid]["rankHistory"].append({
+            "week": f"W{row['week_number']}",
+            "rank": row['store_rank'],
+            "avgPScore": row['avg_p_score'],
+            "totalRevenue": row['total_revenue']
+        })
+        
+    for sid in stores_map:
+        stores_map[sid]["rankHistory"].reverse()
+        
+    return {
+        "weeks": sorted(list(set(f"W{r['week_number']}" for r in history))),
+        "stores": list(stores_map.values())
+    }
+
+@app.get("/api/headoffice/warehouse/global-leaderboard")
+async def get_warehouse_global_leaderboard(week: int = None, year: int = None, limit: int = 10):
+    cw, cy = get_current_week()
+    w = week or cw
+    y = year or cy
+    
+    sql = """
+        SELECT 
+            e.id as employeeId, e.name, ws.department, 
+            e.store_id as storeId, s.store_name as storeName,
+            ws.P_score as pScore, ws.M1 as weeklyRevenue, -- M1 is the score but here requested as revenue placeholder if needed
+            e.level, e.level_title as levelLabel, e.total_xp as xp
+        FROM weekly_scores ws
+        JOIN employees e ON ws.employee_id = e.id
+        JOIN stores s ON e.store_id = s.store_id
+        WHERE ws.week_number = ? AND ws.year = ?
+        ORDER BY ws.P_score DESC
+        LIMIT ?
+    """
+    results = query(sql, (w, y, limit))
+    for i, res in enumerate(results):
+        res["rank"] = i + 1
+        
+    return {
+        "weekNumber": w,
+        "leaderboard": results
+    }
+
+# ==================== SCHEDULER ====================
+
+async def run_scheduler():
+    """Runs at startup and periodically checks for Sunday 11:59 PM IST."""
+    print("Initializing aggregation scheduler...")
+    
+    # Run once immediately for current week
+    cw, cy = get_current_week()
+    try:
+        run_weekly_aggregation(cw, cy)
+        # Backfill last 8 weeks if empty
+        for i in range(1, 9):
+            bw = cw - i
+            by = cy
+            if bw <= 0:
+                bw += 52
+                by -= 1
+            
+            exists = query("SELECT 1 FROM store_weekly_summary WHERE week_number = ? AND year = ? LIMIT 1", (bw, by))
+            if not exists:
+                print(f"Backfilling aggregation for W{bw} {by}...")
+                run_weekly_aggregation(bw, by)
+    except Exception as e:
+        print(f"Startup aggregation error: {e}")
+
+    while True:
+        # Calculate time until next Sunday 23:59:00 IST (UTC+5:30)
+        # simplistic check every hour
+        await asyncio.sleep(3600)
+        now = datetime.now() # assume server time matches desired TZ or convert
+        if now.weekday() == 6 and now.hour == 23 and now.minute >= 50:
+            print("Scheduled aggregation triggered...")
+            cw, cy = get_current_week()
+            run_weekly_aggregation(cw, cy)
+            await asyncio.sleep(600) # prevent double trigger
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(run_scheduler())
+>>>>>>> 55b7e13 (Removed JSON files containing secrets)

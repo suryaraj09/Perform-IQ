@@ -2,10 +2,8 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { useApi } from '../../hooks/useApi';
 import { api } from '../../utils/api';
 import { MapPin, Clock, CheckCircle, XCircle } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
 import {
-    STORE_LAT,
-    STORE_LNG,
-    GEOFENCE_RADIUS,
     GEOFENCE_CHECK_INTERVAL,
     haversineDistance,
 } from '../../utils/geofenceConfig';
@@ -37,6 +35,7 @@ export default function Attendance({ employeeId, employeeName }: { employeeId: n
     const { data: history } = useApi<AttendanceRecord[]>(`/api/attendance?employee_id=${employeeId}`);
     const [punching, setPunching] = useState(false);
     const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
+    const { storeLat, storeLng, geofenceRadius } = useAuth();
 
     // Geofence tracking refs (silent — no UI)
     const geofenceIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -52,6 +51,7 @@ export default function Attendance({ employeeId, employeeName }: { employeeId: n
         firstFailTimeRef.current = null;
     }, []);
 
+<<<<<<< HEAD
     const runGeofenceCheck = useCallback(async () => {
         try {
             const position = await new Promise<GeolocationPosition>((resolve, reject) => {
@@ -80,6 +80,8 @@ export default function Attendance({ employeeId, employeeName }: { employeeId: n
         }
     }, []);
 
+=======
+>>>>>>> 55b7e13 (Removed JSON files containing secrets)
     const handleGeofenceFail = useCallback(() => {
         const now = new Date().toISOString();
 
@@ -104,7 +106,7 @@ export default function Attendance({ employeeId, employeeName }: { employeeId: n
                     }),
                 });
             } catch {
-                // Silent — do not show errors for background checks
+                // Silent
             }
 
             // Reset cycle
@@ -112,6 +114,38 @@ export default function Attendance({ employeeId, employeeName }: { employeeId: n
             firstFailTimeRef.current = null;
         }
     }, [employeeId, employeeName, status?.punch_in_time]);
+
+    const runGeofenceCheck = useCallback(async () => {
+        try {
+            const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+                navigator.geolocation.getCurrentPosition(resolve, reject, {
+                    enableHighAccuracy: true,
+                    timeout: 10000,
+                });
+            });
+
+            if (storeLat == null || storeLng == null || geofenceRadius == null) return;
+
+            const distance = haversineDistance(
+                position.coords.latitude,
+                position.coords.longitude,
+                storeLat,
+                storeLng
+            );
+
+            if (distance <= geofenceRadius) {
+                consecutiveFailCountRef.current = 0;
+                firstFailTimeRef.current = null;
+            } else {
+                handleGeofenceFail();
+            }
+        } catch {
+
+            handleGeofenceFail();
+        }
+    }, [storeLat, storeLng, geofenceRadius, handleGeofenceFail]);
+
+    // Empty block, moved up
 
     // Start/stop geofence interval based on punch-in status
     useEffect(() => {

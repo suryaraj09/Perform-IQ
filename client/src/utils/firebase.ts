@@ -28,9 +28,9 @@ export interface EmployeeProfile {
     id: number;
     name: string;
     email: string;
-    role: 'employee' | 'manager';
+    role: 'employee' | 'manager' | 'HEAD_OFFICE';
     department_id: number;
-    store_id: number;
+    store_id: number | string;
     department_name: string;
     store_name: string;
     total_xp: number;

@@ -1,129 +1,169 @@
-"""K-Means Employee Clustering."""
-
 import sys
-sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from database import query
 import numpy as np
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
+from database import query
 
-
-def cluster_employees(department_id: int = None, start_date: str = None, end_date: str = None, n_clusters: int = 3) -> dict:
+def cluster_employees(department_id, start_date, end_date, n_clusters=4):
     """
-    Cluster employees using K-Means on [revenue, basket_size, app_conversion].
-    Returns cluster assignments with centroids.
+    Higher-level wrapper to fetch data and run clustering.
+    Returns format expected by legacy Clustering.tsx component.
     """
-    # Build employee filter
-    where_clause = "WHERE e.role = 'employee' AND e.is_active = 1"
+    where = "WHERE e.role = 'employee' AND e.is_active = 1"
     params = []
     if department_id:
-        where_clause += " AND e.department_id = ?"
+        where += " AND e.department_id = ?"
         params.append(department_id)
 
-    employees = query(f"SELECT e.id, e.name, e.department_id FROM employees e {where_clause}", tuple(params))
+    employees = query(
+        f"SELECT e.id, e.name, d.name as department FROM employees e JOIN departments d ON e.department_id = d.id {where}",
+        tuple(params)
+    )
 
-    if len(employees) < n_clusters:
-        return {"error": "Not enough employees for clustering", "clusters": []}
+    if not employees:
+        return {"clusters": [], "centroids": [], "n_employees": 0}
 
-    # Build feature matrix
-    features = []
-    emp_data = []
-
+    employees_data = []
     for emp in employees:
-        date_filter = ""
-        date_params = []
-        if start_date and end_date:
-            date_filter = " AND sale_date BETWEEN ? AND ?"
-            date_params = [start_date, end_date]
-
-        # Total revenue
-        rev = query(
-            f"SELECT COALESCE(SUM(revenue), 0) as val FROM sales WHERE employee_id = ? AND status = 'approved'{date_filter}",
-            (emp["id"], *date_params), one=True
+        stats = query(
+            """SELECT COALESCE(SUM(revenue), 0) as total_revenue,
+                      COALESCE(AVG(basket_size), 0) as avg_basket
+               FROM sales
+               WHERE employee_id = ? AND status = 'approved' AND sale_date BETWEEN ? AND ?""",
+            (emp["id"], start_date, end_date),
+            one=True
         )
 
-        # Avg basket size
-        basket = query(
-            f"SELECT COALESCE(AVG(basket_size), 0) as val FROM sales WHERE employee_id = ? AND status = 'approved'{date_filter}",
-            (emp["id"], *date_params), one=True
-        )
-
-        # App downloads count
-        downloads = query(
-            f"SELECT COUNT(*) as val FROM app_downloads WHERE employee_id = ? AND status = 'approved'" +
-            (f" AND download_date BETWEEN ? AND ?" if start_date and end_date else ""),
-            (emp["id"], *date_params) if date_params else (emp["id"],), one=True
-        )
-
-        # Num sales (for conversion rate)
-        num_sales = query(
-            f"SELECT COUNT(*) as val FROM sales WHERE employee_id = ? AND status = 'approved'{date_filter}",
-            (emp["id"], *date_params), one=True
-        )
-
-        conversion = downloads["val"] / num_sales["val"] if num_sales["val"] > 0 else 0
-
-        features.append([rev["val"], basket["val"], conversion])
-        emp_data.append({
-            "id": emp["id"],
+        employees_data.append({
+            "id": str(emp["id"]),
             "name": emp["name"],
-            "total_revenue": round(rev["val"], 2),
-            "avg_basket": round(basket["val"], 2),
-            "app_conversion": round(conversion, 4),
+            "department": emp["department"],
+            "M1": stats["total_revenue"],
+            "M2": stats["avg_basket"],
+            "P": 0
         })
 
-    if not features:
-        return {"clusters": [], "centroids": []}
+    if len(employees_data) < 4:
+        # Not enough data for k=4 clustering
+        return {"clusters": [], "centroids": [], "n_employees": len(employees_data)}
 
-    X = np.array(features)
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-
-    kmeans = KMeans(n_clusters=min(n_clusters, len(X)), random_state=42, n_init=10)
-    labels = kmeans.fit_predict(X_scaled)
-
-    # Name clusters based on centroids
-    cluster_names = _name_clusters(kmeans.cluster_centers_, scaler)
-
-    # Build result
-    clusters = {}
-    for i, emp in enumerate(emp_data):
-        cluster_id = int(labels[i])
-        if cluster_id not in clusters:
-            clusters[cluster_id] = {
-                "cluster_id": cluster_id,
-                "name": cluster_names[cluster_id],
-                "employees": [],
-            }
-        clusters[cluster_id]["employees"].append(emp)
-
+    clustered, centroids_raw = run_performance_clustering(employees_data)
+    
+    # Reformat for legacy Clustering.tsx component
+    cluster_labels = [
+        "High Vol High Basket",
+        "High Vol Low Basket",
+        "Low Vol High Basket",
+        "Low Vol Low Basket"
+    ]
+    
+    clusters = []
+    for i in range(4):
+        c_emps = []
+        for emp in clustered:
+            if emp["cluster"] == i:
+                c_emps.append({
+                    "id": int(emp["id"]),
+                    "name": emp["name"],
+                    "total_revenue": emp["M1"],
+                    "avg_basket": emp["M2"]
+                })
+        clusters.append({
+            "cluster_id": i,
+            "name": cluster_labels[i],
+            "employees": c_emps
+        })
+        
+    centroids = []
+    for c in centroids_raw:
+        centroids.append({
+            "cluster_id": c["cluster"],
+            "name": c["label"],
+            "revenue": c["M1"],
+            "basket_size": c["M2"]
+        })
+        
     return {
-        "clusters": list(clusters.values()),
-        "centroids": [
-            {
-                "cluster_id": i,
-                "name": cluster_names[i],
-                "revenue": round(c[0], 2),
-                "basket_size": round(c[1], 2),
-                "app_conversion": round(c[2], 4),
-            }
-            for i, c in enumerate(scaler.inverse_transform(kmeans.cluster_centers_))
-        ],
-        "n_employees": len(emp_data),
+        "clusters": clusters,
+        "centroids": centroids,
+        "n_employees": len(clustered)
     }
 
+def run_performance_clustering(employees_data):
+    """
+    Run K-Means clustering on [M1, M2] (Revenue vs Target, Basket Performance).
+    k=4 clusters.
+    """
+    if len(employees_data) < 4:
+        # Not enough data for 4 clusters, return default
+        return employees_data, []
 
-def _name_clusters(centers_scaled, scaler):
-    """Auto-name clusters based on their characteristics."""
-    centers = scaler.inverse_transform(centers_scaled)
-    names = {}
+    # Prepare features
+    features = []
+    for emp in employees_data:
+        features.append([emp["M1"] or 0, emp["M2"] or 0])
+    
+    X = np.array(features)
+    
+    # Sklearn KMeans
+    kmeans = KMeans(n_clusters=4, random_state=42, n_init=10)
+    labels = kmeans.fit_predict(X)
+    centroids = kmeans.cluster_centers_
 
-    # Sort by total revenue (first feature)
-    ranked = sorted(range(len(centers)), key=lambda i: centers[i][0], reverse=True)
+    # Map clusters to labels based on their centroids [M1, M2]
+    # We'll identify the clusters by their relative coordinates
+    # Cluster 0: High Vol High Basket
+    # Cluster 1: High Vol Low Basket
+    # Cluster 2: Low Vol High Basket
+    # Cluster 3: Low Vol Low Basket
+    
+    # Sort centroids by M1 (descending)
+    sorted_by_m1 = sorted(enumerate(centroids), key=lambda x: x[1][0], reverse=True)
+    # Top 2 on M1
+    top_2_m1 = sorted_by_m1[:2]
+    # Bottom 2 on M1
+    bottom_2_m1 = sorted_by_m1[2:]
+    
+    # Sort top 2 by M2
+    hv_hb = sorted(top_2_m1, key=lambda x: x[1][1], reverse=True)[0]
+    hv_lb = sorted(top_2_m1, key=lambda x: x[1][1], reverse=True)[1]
+    
+    # Sort bottom 2 by M2
+    lv_hb = sorted(bottom_2_m1, key=lambda x: x[1][1], reverse=True)[0]
+    lv_lb = sorted(bottom_2_m1, key=lambda x: x[1][1], reverse=True)[1]
+    
+    mapping = {
+        hv_hb[0]: 0, # High Vol High Basket
+        hv_lb[0]: 1, # High Vol Low Basket
+        lv_hb[0]: 2, # Low Vol High Basket
+        lv_lb[0]: 3  # Low Vol Low Basket
+    }
+    
+    cluster_labels = [
+        "High Vol High Basket",
+        "High Vol Low Basket",
+        "Low Vol High Basket",
+        "Low Vol Low Basket"
+    ]
 
-    name_options = ["High Performers", "Steady Performers", "Growth Potential", "Needs Attention"]
-    for idx, cluster_id in enumerate(ranked):
-        names[cluster_id] = name_options[min(idx, len(name_options) - 1)]
+    # Update employees with their mapped cluster ID
+    for i, emp in enumerate(employees_data):
+        emp["cluster"] = mapping[labels[i]]
+        
+    # Format centroids for response
+    formatted_centroids = []
+    for raw_idx, label_idx in mapping.items():
+        formatted_centroids.append({
+            "cluster": label_idx,
+            "label": cluster_labels[label_idx],
+            "M1": round(float(centroids[raw_idx][0]), 1),
+            "M2": round(float(centroids[raw_idx][1]), 1)
+        })
+        
+    # Sort centroids by internal cluster ID (0, 1, 2, 3)
+    formatted_centroids.sort(key=lambda x: x["cluster"])
 
-    return names
+    return employees_data, formatted_centroids

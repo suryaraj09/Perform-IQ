@@ -1,9 +1,19 @@
 import { useApi } from '../../hooks/useApi';
+<<<<<<< HEAD
 import { useSSE } from '../../hooks/useSSE';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, ScatterChart, Scatter, ZAxis, ReferenceLine } from 'recharts';
 import { IndianRupee, Users, Target, ClipboardCheck, Bell, UserPlus, CheckCircle2, XCircle, TrendingUp, TrendingDown, AlertTriangle, Shield } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+=======
+import { useAuth } from '../../context/AuthContext';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, ScatterChart, Scatter, ZAxis, ReferenceLine, Legend } from 'recharts';
+import { IndianRupee, Users, Target, ClipboardCheck, Bell, UserPlus, CheckCircle2, XCircle, TrendingUp, TrendingDown, AlertTriangle } from 'lucide-react';
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import SegmentationTab from './SegmentationTab';
+import { Grid, PieChart as PieIcon } from 'lucide-react';
+>>>>>>> 55b7e13 (Removed JSON files containing secrets)
 
 // ==================== INTERFACES ====================
 
@@ -57,6 +67,30 @@ function ChartLoading() {
     return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 200, color: 'var(--text-muted)', fontSize: '0.85rem' }}>Loading chart data...</div>;
 }
 
+<<<<<<< HEAD
+=======
+// ==================== HELPERS: ISO Week ====================
+function getISOWeek(date: Date) {
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    const dayNum = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+}
+
+function getWeekOptions(count = 8) {
+    const options = [];
+    const now = new Date();
+    for (let i = 0; i < count; i++) {
+        const d = new Date(now.getTime() - i * 7 * 24 * 60 * 60 * 1000);
+        const w = getISOWeek(d);
+        const y = d.getFullYear();
+        options.push({ label: i === 0 ? `Current Week (W${w})` : `W${w}, ${y}`, week: w, year: y });
+    }
+    return options;
+}
+
+>>>>>>> 55b7e13 (Removed JSON files containing secrets)
 // ==================== CHART 8: Store Summary Cards ====================
 function StoreSummaryCards({ overview }: { overview: StoreOverview }) {
     const nav = useNavigate();
@@ -165,8 +199,13 @@ function RevenueVsTarget({ employees }: { employees: StoreOverview['currentWeek'
                             <YAxis tick={{ fill: 'var(--text-muted)', fontSize: 11 }} tickFormatter={(v) => `₹${(v / 1000).toFixed(0)}K`} />
                             <Tooltip
                                 contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text-primary)' }}
+<<<<<<< HEAD
                                 formatter={(v: any, name: string) => [`₹${Number(v).toLocaleString('en-IN')}`, name === 'revenue' ? 'Revenue' : 'Target']}
                                 labelFormatter={(name) => { const d = data.find(x => x.name === name); return d ? `${name} — ${d.pctTarget}% of target` : name; }}
+=======
+                                formatter={(v: any, name: any) => [`₹${Number(v).toLocaleString('en-IN')}`, name === 'revenue' ? 'Revenue' : 'Target']}
+                                labelFormatter={(label: any) => { const d = data.find(x => x.name === label); return d ? `${label} — ${d.pctTarget}% of target` : `${label}`; }}
+>>>>>>> 55b7e13 (Removed JSON files containing secrets)
                             />
                             <ReferenceLine y={avgRevenue} stroke="#F97316" strokeDasharray="4 4" strokeOpacity={0.6} />
                             <Bar dataKey="revenue" fill="#F97316" radius={[6, 6, 0, 0]} name="revenue" />
@@ -205,7 +244,11 @@ function ScoreDistribution({ employees }: { employees: StoreOverview['currentWee
                         <XAxis dataKey="band" tick={{ fill: 'var(--text-muted)', fontSize: 11 }} />
                         <YAxis tick={{ fill: 'var(--text-muted)', fontSize: 11 }} allowDecimals={false} />
                         <Tooltip contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text-primary)' }} />
+<<<<<<< HEAD
                         <Bar dataKey="count" radius={[6, 6, 0, 0]} label={{ position: 'top', fill: 'var(--text-secondary)', fontSize: 11, formatter: (v: number) => `${data.find(d => d.count === v)?.pct || 0}%` }}>
+=======
+                        <Bar dataKey="count" radius={[6, 6, 0, 0]} label={{ position: 'top', fill: 'var(--text-secondary)', fontSize: 11, formatter: (v: any) => `${data.find(d => d.count === v)?.pct || 0}%` }}>
+>>>>>>> 55b7e13 (Removed JSON files containing secrets)
                             {data.map((d, i) => <Cell key={i} fill={d.fill} />)}
                         </Bar>
                     </BarChart>
@@ -293,7 +336,11 @@ function BasketTrend({ basketTrend }: { basketTrend: StoreOverview['basketTrend'
                         <YAxis tick={{ fill: 'var(--text-muted)', fontSize: 11 }} tickFormatter={(v) => `₹${v}`} />
                         <Tooltip
                             contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text-primary)' }}
+<<<<<<< HEAD
                             formatter={(v: any, name: string) => [`₹${Number(v).toLocaleString('en-IN')}`, name]}
+=======
+                            formatter={(v: any, name: any) => [`₹${Number(v).toLocaleString('en-IN')}`, name]}
+>>>>>>> 55b7e13 (Removed JSON files containing secrets)
                         />
                         <ReferenceLine y={deptAvg} stroke="var(--text-muted)" strokeDasharray="4 4" label={{ value: `Avg ₹${deptAvg.toFixed(0)}`, fill: 'var(--text-muted)', fontSize: 10, position: 'right' }} />
                         {empNames.slice(0, 10).map((name, i) => (
@@ -380,7 +427,11 @@ function DeptComparison({ departments }: { departments: DeptSummary['departments
                         <YAxis tick={{ fill: 'var(--text-muted)', fontSize: 11 }} domain={[0, 100]} />
                         <Tooltip
                             contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text-primary)' }}
+<<<<<<< HEAD
                             formatter={(v: any, name: string, props: any) => {
+=======
+                            formatter={(v: any, name: any, props: any) => {
+>>>>>>> 55b7e13 (Removed JSON files containing secrets)
                                 if (name === 'Revenue (scaled)') return [`₹${props.payload.avgRevenue.toLocaleString('en-IN')}`, 'Avg Revenue'];
                                 return [v, name];
                             }}
@@ -397,12 +448,32 @@ function DeptComparison({ departments }: { departments: DeptSummary['departments
 
 
 // ==================== MAIN COMPONENT ====================
+<<<<<<< HEAD
 export default function ManagerDashboard() {
     const { data, loading, refetch } = useApi<ManagerDashboardData>('/api/dashboard/manager');
     const { data: pendingEmployees, refetch: refetchPending } = useApi<PendingEmployee[]>('/api/manager/pending-employees');
     const { data: storeData, loading: storeLoading } = useApi<StoreOverview>('/api/manager/store-overview');
     const { data: deptData } = useApi<DeptSummary>('/api/manager/department-summary');
     const { alerts } = useSSE();
+=======
+export default function ManagerDashboard({ storeId }: { storeId?: string } = {}) {
+    const { activeStoreId: contextStoreId } = useAuth();
+    const effectiveStoreId = storeId || contextStoreId;
+    
+    const { data, loading, refetch } = useApi<ManagerDashboardData>('/api/dashboard/manager', [effectiveStoreId]);
+    const { data: pendingEmployees, refetch: refetchPending } = useApi<PendingEmployee[]>('/api/manager/pending-employees', [effectiveStoreId]);
+    const weekOptions = getWeekOptions(8);
+    const [selectedWeek, setSelectedWeek] = useState(weekOptions[0]);
+    const isHistorical = selectedWeek.week !== weekOptions[0].week || selectedWeek.year !== weekOptions[0].year;
+
+    const queryParams = `?store_id=${storeId}&week=${selectedWeek.week}&year=${selectedWeek.year}`;
+    const { data: overview } = useApi<StoreOverview>(`/api/manager/store-overview${queryParams}`, [selectedWeek, storeId]);
+    const { data: trajectories, loading: loadingTrajectories } = useApi<any[]>(`/api/manager/employee-trajectories?store_id=${storeId}&weeks=8`, [storeId]);
+    const { data: deptData } = useApi<DeptSummary>(`/api/manager/department-summary?store_id=${storeId}`, [storeId]);
+
+    const [alerts] = useState<Array<{ type: string; message: string; timestamp: string }>>([]);
+    
+>>>>>>> 55b7e13 (Removed JSON files containing secrets)
     const [actionLoading, setActionLoading] = useState<number | null>(null);
 
     const handleReview = async (employeeId: number, status: 'approved' | 'rejected') => {
@@ -422,6 +493,8 @@ export default function ManagerDashboard() {
         }
     };
 
+    const [activeTab, setActiveTab] = useState<'overview' | 'segmentation'>('overview');
+
     if (loading || !data) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>Loading manager dashboard...</div>;
 
     const { summary, departments, attendance } = data;
@@ -430,9 +503,70 @@ export default function ManagerDashboard() {
     const COLORS = ['#3B82F6', '#60A5FA', '#93C5FD', '#BFDBFE'];
 
     return (
+<<<<<<< HEAD
         <div className="animate-in">
             {/* ===== PHASE 2: Store Summary Cards ===== */}
             {storeData && <StoreSummaryCards overview={storeData} />}
+=======
+        <div className="dashboard-container" style={{ padding: 24, paddingBottom: 80 }}>
+            {/* Historical Week Selector */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+                <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0 }}>Manager Dashboard</h1>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Select Period:</span>
+                    <select 
+                        value={`${selectedWeek.week}-${selectedWeek.year}`}
+                        onChange={(e) => {
+                            const [w, y] = e.target.value.split('-').map(Number);
+                            setSelectedWeek({ week: w, year: y, label: e.target.options[e.target.selectedIndex].text });
+                        }}
+                        style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid var(--border)', backgroundColor: 'var(--bg-card)', color: 'var(--text)' }}
+                    >
+                        {weekOptions.map(opt => (
+                            <option key={`${opt.week}-${opt.year}`} value={`${opt.week}-${opt.year}`}>{opt.label}</option>
+                        ))}
+                    </select>
+                </div>
+            </div>
+
+            {isHistorical && (
+                <div style={{ backgroundColor: '#185FA520', border: '1px solid #185FA5', borderRadius: 8, padding: '12px 16px', marginBottom: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#185FA5', fontWeight: 600 }}>
+                        <ClipboardCheck size={18} />
+                        Viewing historical data — Week {selectedWeek.week}, {selectedWeek.year}
+                    </div>
+                    <button 
+                        onClick={() => setSelectedWeek(weekOptions[0])}
+                        style={{ background: 'none', border: 'none', color: '#185FA5', textDecoration: 'underline', cursor: 'pointer', fontSize: '0.85rem' }}
+                    >
+                        Back to current week
+                    </button>
+                </div>
+            )}
+
+            {/* Tab Navigation */}
+            <div className="dashboard-tabs">
+                <button 
+                    className={`dashboard-tab ${activeTab === 'overview' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('overview')}
+                >
+                    <PieIcon /> Performance Overview
+                </button>
+                <button 
+                    className={`dashboard-tab ${activeTab === 'segmentation' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('segmentation')}
+                >
+                    <Grid /> Segmentation & Clustering
+                </button>
+            </div>
+
+            {activeTab === 'segmentation' ? (
+                <SegmentationTab />
+            ) : (
+                <>
+                    {/* ===== PHASE 2: Store Summary Cards ===== */}
+            {overview && <StoreSummaryCards overview={overview} />}
+>>>>>>> 55b7e13 (Removed JSON files containing secrets)
 
             {/* Command Center Banner */}
             <div style={{
@@ -487,16 +621,26 @@ export default function ManagerDashboard() {
             </div>
 
             {/* ===== PHASE 2 CHARTS ===== */}
+<<<<<<< HEAD
             {storeData && (
                 <>
                     {/* P Score Ranking + Score Distribution */}
                     <div className="dashboard-grid" style={{ marginTop: 24 }}>
                         <PScoreRanking employees={storeData.currentWeek.employees} />
                         <ScoreDistribution employees={storeData.currentWeek.employees} />
+=======
+            {overview && (
+                <>
+                    {/* P Score Ranking + Score Distribution */}
+                    <div className="dashboard-grid" style={{ marginTop: 24 }}>
+                        <PScoreRanking employees={overview.currentWeek.employees} />
+                        <ScoreDistribution employees={overview.currentWeek.employees} />
+>>>>>>> 55b7e13 (Removed JSON files containing secrets)
                     </div>
 
                     {/* Revenue vs Target + Stability Scatter */}
                     <div className="dashboard-grid">
+<<<<<<< HEAD
                         <RevenueVsTarget employees={storeData.currentWeek.employees} />
                         <StabilityScatter employees={storeData.currentWeek.employees} />
                     </div>
@@ -506,6 +650,58 @@ export default function ManagerDashboard() {
 
                     {/* Attendance Heatmap */}
                     <AttendanceHeatmap matrix={storeData.attendanceMatrix} />
+=======
+                        <RevenueVsTarget employees={overview.currentWeek.employees} />
+                        <StabilityScatter employees={overview.currentWeek.employees} />
+                    </div>
+
+                    {/* Basket Trend */}
+                    <BasketTrend basketTrend={overview.basketTrend} />
+
+                    {/* Employee Revenue Trajectory Chart */}
+                <div className="card" style={{ padding: 20 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+                        <TrendingUp size={18} color="var(--primary)" />
+                        <h3 style={{ margin: 0, fontSize: '0.95rem' }}>Employee Revenue Trajectory — 8 Weeks</h3>
+                    </div>
+                    <div style={{ height: 350 }}>
+                        {loadingTrajectories ? <ChartLoading /> : (
+                            <ResponsiveContainer width="100%" height="100%">
+                                <LineChart data={trajectories?.[0]?.data.map((_: any, i: number) => {
+                                    const point: any = { week: trajectories[0].data[i].week };
+                                    trajectories.forEach((emp: any) => {
+                                        point[emp.name] = emp.data[i].revenue;
+                                    });
+                                    return point;
+                                })}>
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border)" />
+                                    <XAxis dataKey="week" style={{ fontSize: '0.75rem' }} axisLine={false} tickLine={false} />
+                                    <YAxis style={{ fontSize: '0.75rem' }} axisLine={false} tickLine={false} tickFormatter={(v) => `₹${v / 1000}k`} />
+                                    <Tooltip 
+                                        contentStyle={{ backgroundColor: 'var(--bg-card)', borderColor: 'var(--border)', borderRadius: 12, fontSize: '0.85rem', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1)' }}
+                                        formatter={(v: any) => [`₹${Number(v).toLocaleString('en-IN')}`, 'Revenue']}
+                                    />
+                                    <Legend wrapperStyle={{ fontSize: '0.75rem', paddingTop: 10 }} />
+                                    {trajectories?.map((emp: any, idx: number) => (
+                                        <Line 
+                                            key={emp.employeeId}
+                                            type="monotone"
+                                            dataKey={emp.name}
+                                            stroke={DEPT_COLORS[emp.department] || EMP_PALETTE[idx % EMP_PALETTE.length]}
+                                            strokeWidth={2}
+                                            dot={{ r: 3 }}
+                                            activeDot={{ r: 5 }}
+                                        />
+                                    ))}
+                                </LineChart>
+                            </ResponsiveContainer>
+                        )}
+                    </div>
+                </div>
+
+                    {/* Attendance Heatmap */}
+                    <AttendanceHeatmap matrix={overview.attendanceMatrix} />
+>>>>>>> 55b7e13 (Removed JSON files containing secrets)
                 </>
             )}
 
@@ -634,7 +830,7 @@ export default function ManagerDashboard() {
                         <span className="card-title"><Bell size={14} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 6 }} />Live Alerts</span>
                     </div>
                     <div style={{ maxHeight: 300, overflowY: 'auto' }}>
-                        {alerts.length > 0 ? alerts.map((alert, i) => (
+                        {alerts.length > 0 ? alerts.map((alert: { type: string; message: string; timestamp: string }, i: number) => (
                             <div key={i} className={`alert-item ${alert.type === 'new_sale' ? 'alert-warning' : 'alert-success'}`}>
                                 {alert.message}
                                 <span style={{ marginLeft: 'auto', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
@@ -647,6 +843,8 @@ export default function ManagerDashboard() {
                     </div>
                 </div>
             </div>
-        </div>
-    );
+        </>
+        )}
+    </div>
+);
 }

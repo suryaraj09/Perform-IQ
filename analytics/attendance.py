@@ -38,8 +38,8 @@ def punch_in(employee_id: int, latitude: float, longitude: float) -> dict:
 
     
     store = query(
-        """SELECT s.latitude, s.longitude, s.geofence_radius_meters, s.shift_start_time
-           FROM employees e JOIN stores s ON e.store_id = s.id WHERE e.id = ?""",
+        """SELECT s.store_lat, s.store_lng, s.geofence_radius, s.shift_start_time
+           FROM employees e JOIN stores s ON e.store_id = s.store_id WHERE e.id = ?""",
         (employee_id,), one=True
     )
 
@@ -93,7 +93,7 @@ def punch_out(employee_id: int, latitude: float, longitude: float) -> dict:
 
     
     store = query(
-        "SELECT s.latitude, s.longitude, s.geofence_radius_meters FROM employees e JOIN stores s ON e.store_id = s.id WHERE e.id = ?",
+        "SELECT s.store_lat, s.store_lng, s.geofence_radius FROM employees e JOIN stores s ON e.store_id = s.store_id WHERE e.id = ?",
         (employee_id,), one=True
     )
 

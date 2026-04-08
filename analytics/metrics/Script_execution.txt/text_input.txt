@@ -1,2 +1,2 @@
 cd client npm run dev
-cd analytics ..\.venv\Scripts\python.exe -m uvicorn main:app --reload --port 8000
+cd analytics ..\.venv\Scripts\python.exe -m uvicorn main:app --reload --port 8000 

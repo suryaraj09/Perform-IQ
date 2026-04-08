@@ -1,6 +1,11 @@
 import { useApi } from '../../hooks/useApi';
+<<<<<<< HEAD
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Area, ComposedChart, ReferenceLine } from 'recharts';
 import { TrendingUp, IndianRupee, ShoppingCart, Zap } from 'lucide-react';
+=======
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Area, ComposedChart } from 'recharts';
+import { IndianRupee, ShoppingCart, Zap } from 'lucide-react';
+>>>>>>> 55b7e13 (Removed JSON files containing secrets)
 
 interface DashboardData {
     employee: { name: string; department_name: string; store_name: string; total_xp: number; level: number; level_title: string };
@@ -157,11 +162,19 @@ function RevenueTargetChart({ weeklyTrend }: { weeklyTrend: V2DashboardData['wee
                             <YAxis tick={{ fill: 'var(--text-muted)', fontSize: 12 }} tickFormatter={(v) => `₹${(v / 1000).toFixed(0)}K`} />
                             <Tooltip
                                 contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text-primary)' }}
+<<<<<<< HEAD
                                 formatter={(v: any, name: string) => [
                                     `₹${Number(v).toLocaleString('en-IN')}`,
                                     name === 'revenue' ? 'My Revenue' : name === 'target' ? 'My Target' : name
                                 ]}
                                 labelFormatter={(label: string) => {
+=======
+                                formatter={(v: any, name: any) => [
+                                    `₹${Number(v).toLocaleString('en-IN')}`,
+                                    name === 'revenue' ? 'My Revenue' : name === 'target' ? 'My Target' : name || ''
+                                ]}
+                                labelFormatter={(label: any) => {
+>>>>>>> 55b7e13 (Removed JSON files containing secrets)
                                     const w = chartData.find(d => d.week === label);
                                     return w ? `${label} · P Score: ${w.pScore}` : label;
                                 }}
@@ -384,7 +397,7 @@ export default function EmployeeDashboard({ employeeId }: { employeeId: number }
                                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
                                 <XAxis dataKey="week_start" tick={{ fill: 'var(--text-muted)', fontSize: 12 }} tickFormatter={(v) => new Date(v).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })} />
                                 <YAxis tick={{ fill: 'var(--text-muted)', fontSize: 12 }} tickFormatter={(v) => `₹${(v / 1000).toFixed(0)}K`} />
-                                <Tooltip contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text-primary)' }} formatter={(v: any) => [`₹${Number(v).toLocaleString()}`, '']} />
+                                <Tooltip contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text-primary)' }} formatter={(v: any, name: any) => [`₹${Number(v).toLocaleString()}`, name]} />
                                 <Line type="monotone" dataKey="revenue" stroke="#F97316" strokeWidth={3} dot={{ fill: '#F97316', r: 5 }} activeDot={{ r: 7 }} name="Revenue" />
                                 <Line type="monotone" dataKey="trend" stroke="#F97316" strokeWidth={1} strokeDasharray="5 5" dot={false} name="Trend" />
                             </LineChart>

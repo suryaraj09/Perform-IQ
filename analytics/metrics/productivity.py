@@ -115,6 +115,7 @@ def compute_productivity_index(employee_id: int, start_date: str, end_date: str)
     """Compute the full Productivity Index with all metric breakdowns."""
     from metrics.stability import get_stability_index
     from metrics.growth import get_growth_trend
+    from config_service import get_config
 
     metrics = {
         "revenue_vs_target": get_revenue_vs_target(employee_id, start_date, end_date),
@@ -126,6 +127,7 @@ def compute_productivity_index(employee_id: int, start_date: str, end_date: str)
         "punctuality": get_punctuality_score(employee_id, start_date, end_date),
     }
 
+<<<<<<< HEAD
     weights = {
         "revenue_vs_target": 0.30,
         "basket_performance": 0.25,
@@ -134,13 +136,30 @@ def compute_productivity_index(employee_id: int, start_date: str, end_date: str)
         "stability_index": 0.10,
         "attendance_rate": 0.05,
         "punctuality": 0.05,
+=======
+    # Fetch dynamic weights from DB
+    db_weights = get_config('METRIC_WEIGHTS')
+    
+    # Map DB shorthand keys to metric names
+    weights_map = {
+        "M1": "revenue_vs_target",
+        "M2": "basket_performance",
+        "M3": "manager_rating",
+        "M4": "growth_trend",
+        "M5": "stability_index",
+        "M7": "attendance_rate",
+        "M8": "punctuality",
+>>>>>>> 55b7e13 (Removed JSON files containing secrets)
     }
+    
+    # Construct final weights dict for the response and calculation
+    active_weights = {weights_map[k]: v for k, v in db_weights.items() if k in weights_map}
 
-    score = sum(metrics[k] * weights[k] for k in weights)
+    score = sum(metrics[k] * active_weights[k] for k in active_weights)
     score = min(100, max(0, round(score, 1)))
 
     return {
         "productivity_index": score,
         "metrics": {k: round(v, 1) for k, v in metrics.items()},
-        "weights": weights,
+        "weights": active_weights,
     }

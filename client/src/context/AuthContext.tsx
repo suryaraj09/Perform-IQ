@@ -1,12 +1,20 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
 import { type User } from 'firebase/auth';
 import { onAuthChange, signIn, signUp, signOutUser, type EmployeeProfile } from '../utils/firebase';
-import { api } from '../utils/api';
+import { api, setGlobalStoreId } from '../utils/api';
 
 interface AuthState {
     firebaseUser: User | null;
     profile: EmployeeProfile | null;
-    role: 'employee' | 'manager' | null;
+    role: 'employee' | 'manager' | 'HEAD_OFFICE' | null;
+    storeId: string | null;
+    activeStoreId: string | null;
+    setActiveStoreId: (id: string) => void;
+    storeName: string | null;
+    employeeId: string | null;
+    storeLat: number | null;
+    storeLng: number | null;
+    geofenceRadius: number | null;
     loading: boolean;
     error: string | null;
     handleSignIn: (email: string, password: string) => Promise<void>;
@@ -19,6 +27,14 @@ const AuthContext = createContext<AuthState>({
     firebaseUser: null,
     profile: null,
     role: null,
+    storeId: null,
+    activeStoreId: null,
+    setActiveStoreId: () => { },
+    storeName: null,
+    employeeId: null,
+    storeLat: null,
+    storeLng: null,
+    geofenceRadius: null,
     loading: true,
     error: null,
     handleSignIn: async () => { },
@@ -37,26 +53,71 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
+    const [activeStoreId, setActiveStoreId] = useState<string | null>(null);
+    const [storeName, setStoreName] = useState<string | null>(null);
+    const [storeLat, setStoreLat] = useState<number | null>(null);
+    const [storeLng, setStoreLng] = useState<number | null>(null);
+    const [geofenceRadius, setGeofenceRadius] = useState<number | null>(null);
+    const [authClaims, setAuthClaims] = useState<{ role?: string; storeId?: string; employeeId?: string }>({});
+
+    // Keep global store id in sync for non-hook api calls
+    useEffect(() => {
+        setGlobalStoreId(activeStoreId);
+    }, [activeStoreId]);
+
     // Listen for Firebase auth state changes
     useEffect(() => {
         const unsubscribe = onAuthChange(async (user) => {
             setFirebaseUser(user);
             if (user) {
                 try {
+                    await user.getIdToken(true);
+                    const idTokenResult = await user.getIdTokenResult();
+                    const sId = idTokenResult.claims.storeId as string;
+                    setAuthClaims({
+                        role: idTokenResult.claims.role as string,
+                        storeId: sId,
+                        employeeId: idTokenResult.claims.employeeId as string,
+                    });
+                    
+                    if (sId) setActiveStoreId(sId);
+                    
                     const emp = await api<EmployeeProfile>(`/api/auth/profile/${user.uid}`);
                     setProfile(emp);
                     setError(null);
+                    
+                    // Fetch store config
+                    const storeCfg = await api<any>(`/api/store/config${sId ? `?store_id=${sId}` : ''}`);
+                    setStoreName(storeCfg.storeName);
+                    setStoreLat(storeCfg.storeLat);
+                    setStoreLng(storeCfg.storeLng);
+                    setGeofenceRadius(storeCfg.geofenceRadius);
+                    
                 } catch {
-                    // Profile not found — user may have just signed up and profile is being created
                     setProfile(null);
                 }
             } else {
                 setProfile(null);
+                setAuthClaims({});
+                setActiveStoreId(null);
+                setStoreName(null);
             }
             setLoading(false);
         });
         return unsubscribe;
     }, []);
+
+    // Effect to refetch store info if activeStoreId changes (for Head Office)
+    useEffect(() => {
+        if (firebaseUser && activeStoreId) {
+            api<any>(`/api/store/config?store_id=${activeStoreId}`).then((cfg: any) => {
+                setStoreName(cfg.storeName);
+                setStoreLat(cfg.storeLat);
+                setStoreLng(cfg.storeLng);
+                setGeofenceRadius(cfg.geofenceRadius);
+            }).catch(console.error);
+        }
+    }, [activeStoreId, firebaseUser]);
 
     const handleSignIn = async (email: string, password: string) => {
         setError(null);
@@ -118,14 +179,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             email: demoRole === 'employee' ? 'employee@demo.com' : 'manager@demo.com',
             role: demoRole,
             department_id: 1,
-            store_id: 1,
+            store_id: 'S001',
             department_name: 'Electronics',
-            store_name: 'MegaMart Andheri',
+            store_name: 'Blue Buddha Navrangpura',
             total_xp: demoRole === 'employee' ? 4200 : 0,
             level: demoRole === 'employee' ? 5 : 1,
             level_title: demoRole === 'employee' ? 'Performer' : 'Manager',
             firebase_uid: 'demo',
+            status: 'approved',
         });
+        setActiveStoreId('S001');
         setLoading(false);
         setError(null);
     };
@@ -134,7 +197,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         <AuthContext.Provider value={{
             firebaseUser,
             profile,
-            role: profile?.role ?? null,
+            role: (authClaims.role as AuthState["role"]) || (profile?.role as AuthState["role"]) || null,
+            storeId: authClaims.storeId || null,
+            activeStoreId,
+            setActiveStoreId,
+            storeName,
+            employeeId: authClaims.employeeId || null,
+            storeLat,
+            storeLng,
+            geofenceRadius,
             loading,
             error,
             handleSignIn,

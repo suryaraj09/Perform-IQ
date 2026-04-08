@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useApi } from '../../hooks/useApi';
 import { api } from '../../utils/api';
+import { useAuth } from '../../context/AuthContext';
 import { Check, X, Image } from 'lucide-react';
 
 interface ReviewQueueData {
@@ -17,7 +18,8 @@ interface ReviewQueueData {
 }
 
 export default function ReviewQueue() {
-    const { data, loading, refetch } = useApi<ReviewQueueData>('/api/manager/review-queue');
+    const { activeStoreId } = useAuth();
+    const { data, loading, refetch } = useApi<ReviewQueueData>('/api/manager/review-queue', [activeStoreId]);
     const [reviewingId, setReviewingId] = useState<number | null>(null);
 
     const handleReview = async (id: number, status: 'approved' | 'rejected') => {

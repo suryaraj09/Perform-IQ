@@ -1,7 +1,4 @@
-// Geofence configuration — update these when the store location changes
-export const STORE_LAT = 22.991573;
-export const STORE_LNG = 72.539284;
-export const GEOFENCE_RADIUS = 100; // meters
+// Geofence configuration constants
 export const GEOFENCE_CHECK_INTERVAL = 15 * 60 * 1000; // 15 minutes in ms
 
 /**

@@ -101,8 +101,8 @@ def seed_departments(conn):
         for store_id in [1, 2]:
             factor = 1.0 if store_id == 1 else 0.8
             conn.execute(
-                "INSERT INTO departments (store_id, name, weekly_revenue_target, avg_basket_size, avg_app_conversion_rate) VALUES (?, ?, ?, ?, ?)",
-                (store_id, name, target * factor, basket, app_rate),
+                "INSERT INTO departments (store_id, name, weekly_revenue_target, avg_basket_size) VALUES (?, ?, ?, ?)",
+                (store_id, name, target * factor, basket),
             )
     conn.commit()
 
@@ -141,13 +141,13 @@ def seed_sales(conn, employees):
         arch = ARCHETYPES[archetype]
         base_rev = sum(arch["rev_range"]) / 2
 
-        for week in range(12):
+        for week in range(16):
             growth_factor = 1 + (arch["growth"] * week)
             week_start = start_date + timedelta(weeks=week)
 
             for day_offset in range(6):
                 day = week_start + timedelta(days=day_offset)
-                if day > datetime.now():
+                if day > datetime(2026, 5, 1):
                     break
 
                 num_sales = random.randint(5, 15)
@@ -162,18 +162,15 @@ def seed_sales(conn, employees):
                     basket = random.uniform(*arch["basket_range"]) / num_sales * growth_factor
                     basket = max(100, basket)
                     num_items = random.randint(1, 5)
-                    app_dl = 1 if random.random() < 0.15 else 0
-
                     conn.execute(
-                        """INSERT INTO sales (employee_id, revenue, basket_size, num_items, app_download,
+                        """INSERT INTO sales (employee_id, revenue, basket_size, num_items,
                            status, submitted_at, sale_date, receipt_photo_path)
-                           VALUES (?, ?, ?, ?, ?, 'approved', ?, ?, ?)""",
+                           VALUES (?, ?, ?, ?, 'approved', ?, ?, ?)""",
                         (
                             emp_id,
                             round(rev, 2),
                             round(basket, 2),
                             num_items,
-                            app_dl,
                             day.strftime("%Y-%m-%d %H:%M:%S"),
                             day.strftime("%Y-%m-%d"),
                             f"uploads/receipts/placeholder_{emp_id}_{day.strftime('%Y%m%d')}.jpg",
@@ -183,37 +180,7 @@ def seed_sales(conn, employees):
     conn.commit()
 
 
-def seed_app_downloads(conn, employees):
-    start_date = datetime(2026, 1, 12)
 
-    for emp_id, archetype, dept_id, store_id in employees:
-        if EMPLOYEE_DATA[emp_id - 1][3] == "manager":
-            continue
-
-        daily_downloads = {"star": (2, 5), "steady": (1, 3), "growing": (1, 4), "inconsistent": (0, 3), "underperformer": (0, 2)}
-        dl_range = daily_downloads[archetype]
-
-        for week in range(12):
-            week_start = start_date + timedelta(weeks=week)
-            for day_offset in range(6):
-                day = week_start + timedelta(days=day_offset)
-                if day > datetime.now():
-                    break
-
-                num_downloads = random.randint(*dl_range)
-                for j in range(num_downloads):
-                    conn.execute(
-                        """INSERT INTO app_downloads (employee_id, status, submitted_at, download_date, screenshot_photo_path)
-                           VALUES (?, 'approved', ?, ?, ?)""",
-                        (
-                            emp_id,
-                            day.strftime("%Y-%m-%d %H:%M:%S"),
-                            day.strftime("%Y-%m-%d"),
-                            f"uploads/screenshots/placeholder_{emp_id}_{day.strftime('%Y%m%d')}_{j}.jpg",
-                        ),
-                    )
-
-    conn.commit()
 
 
 def seed_attendance(conn, employees, stores_data=STORES):
@@ -230,11 +197,11 @@ def seed_attendance(conn, employees, stores_data=STORES):
         attendance_rate = {"star": 0.98, "steady": 0.95, "growing": 0.90, "inconsistent": 0.80, "underperformer": 0.75}
         punctuality = {"star": 0.95, "steady": 0.90, "growing": 0.85, "inconsistent": 0.65, "underperformer": 0.60}
 
-        for week in range(12):
+        for week in range(16):
             week_start = start_date + timedelta(weeks=week)
             for day_offset in range(6):
                 day = week_start + timedelta(days=day_offset)
-                if day > datetime.now():
+                if day > datetime(2026, 5, 1):
                     break
 
                 if random.random() > attendance_rate[archetype]:
@@ -294,11 +261,11 @@ def seed_manager_ratings(conn, employees):
         base = rating_base[archetype]
         manager_id = manager_ids[0] if store_id == 1 else manager_ids[-1]
 
-        for week in range(12):
+        for week in range(16):
             week_start = start_date + timedelta(weeks=week)
             for day_offset in range(6):
                 day = week_start + timedelta(days=day_offset)
-                if day > datetime.now():
+                if day > datetime(2026, 5, 1):
                     break
 
                 if random.random() < 0.85:
@@ -376,11 +343,10 @@ def main():
     print("  → Employees...")
     employees = seed_employees(conn)
 
-    print("  → Sales records (8 weeks)...")
+    print("  → Sales records (16 weeks)...")
     seed_sales(conn, employees)
 
-    print("  → App downloads...")
-    seed_app_downloads(conn, employees)
+
 
     print("  → Attendance records...")
     seed_attendance(conn, employees)
@@ -395,7 +361,7 @@ def main():
     calculate_xp(conn, employees)
 
     cursor = conn.cursor()
-    tables = ["stores", "departments", "employees", "sales", "app_downloads", "attendance", "manager_ratings", "badges"]
+    tables = ["stores", "departments", "employees", "sales", "attendance", "manager_ratings", "badges"]
     print("\n📊 Database Summary:")
     for table in tables:
         count = cursor.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]

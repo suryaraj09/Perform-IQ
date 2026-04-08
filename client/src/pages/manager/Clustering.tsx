@@ -1,4 +1,5 @@
 import { useApi } from '../../hooks/useApi';
+import { useAuth } from '../../context/AuthContext';
 import { ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ZAxis } from 'recharts';
 
 interface ClusterData {
@@ -24,7 +25,8 @@ interface ClusterData {
 const CLUSTER_COLORS = ['#F97316', '#3B82F6', '#22C55E', '#EAB308', '#8B5CF6'];
 
 export default function Clustering() {
-    const { data, loading } = useApi<ClusterData>('/api/clustering');
+    const { activeStoreId } = useAuth();
+    const { data, loading } = useApi<ClusterData>('/api/clustering', [activeStoreId]);
 
     if (loading) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>Computing clusters...</div>;
 

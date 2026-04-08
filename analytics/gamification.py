@@ -4,6 +4,7 @@ import sys
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
 
 from database import query, execute
+from config_service import get_config
 
 LEVEL_THRESHOLDS = [
     (10000, 5, "Champion"),
@@ -58,36 +59,62 @@ BADGE_DEFINITIONS = {
     },
 }
 
-# Please look at this code what shitty bug is here. If you can please fix this shit piece
 def get_level_info(total_xp: int) -> dict:
-    for threshold, level, title in LEVEL_THRESHOLDS:
+    """Get level, title and progress based on dynamic thresholds."""
+    # Fetch from DB: {"Rookie":0, "Associate":1000, ...}
+    db_thresholds = get_config('LEVEL_THRESHOLDS')
+    
+    # Convert to sorted list of (threshold, title) ascending
+    sorted_thresholds = sorted(db_thresholds.items(), key=lambda x: x[1])
+    
+    # We need to find current and next
+    current_level = 1
+    current_title = "Rookie"
+    current_threshold = 0
+    next_threshold = 0
+    
+    for i, (title, threshold) in enumerate(sorted_thresholds):
         if total_xp >= threshold:
-            next_idx = LEVEL_THRESHOLDS.index((threshold, level, title)) - 1
-            if next_idx >= 0:
-                next_threshold = LEVEL_THRESHOLDS[next_idx][0]
-                progress = (total_xp - threshold) / (next_threshold - threshold)
+            current_level = i + 1
+            current_title = title
+            current_threshold = threshold
+            # Peek at next
+            if i + 1 < len(sorted_thresholds):
+                next_threshold = sorted_thresholds[i+1][1]
             else:
                 next_threshold = threshold
-                progress = 1.0
-
-            return {
-                "level": level,
-                "title": title,
-                "total_xp": total_xp,
-                "current_threshold": threshold,
-                "next_threshold": next_threshold,
-                "progress": round(min(1.0, progress), 2),
-                "xp_to_next": max(0, next_threshold - total_xp),
-            }
-
-    return {"level": 1, "title": "Rookie", "total_xp": total_xp, "progress": 0}
+        else:
+            break
+            
+    if next_threshold > current_threshold:
+        progress = (total_xp - current_threshold) / (next_threshold - current_threshold)
+    else:
+        progress = 1.0
+        
+    return {
+        "level": current_level,
+        "title": current_title,
+        "total_xp": total_xp,
+        "current_threshold": current_threshold,
+        "next_threshold": next_threshold,
+        "progress": round(min(1.0, progress), 2),
+        "xp_to_next": max(0, next_threshold - total_xp),
+    }
 
 
 def get_xp_for_score(productivity_index: float) -> int:
-    for threshold, xp in XP_TIERS:
-        if productivity_index >= threshold:
-            return xp
-    return 250
+    """Calculate base XP earned using dynamic tiers."""
+    # Fetch from DB: {"tier1":{"minScore":90,"xp":1000}, ...}
+    db_tiers = get_config('XP_BASE_TIERS')
+    
+    # Sort by minScore descending
+    tiers = sorted(db_tiers.values(), key=lambda x: x['minScore'], reverse=True)
+    
+    for tier in tiers:
+        if productivity_index >= tier['minScore']:
+            return tier['xp']
+            
+    return 250 # Ultimate fallback
 
 
 def get_employee_gamification(employee_id: int) -> dict:
@@ -146,7 +173,7 @@ def _calculate_streak(employee_id: int) -> int:
     return streak
 
 
-def get_leaderboard(department_id: int = None, store_id: int = None, limit: int = 20) -> list:
+def get_leaderboard(department_id: int = None, store_id: str = None, limit: int = 20) -> list:
     where = "WHERE e.role = 'employee' AND e.is_active = 1"
     params = []
 

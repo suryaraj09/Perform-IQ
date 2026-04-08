@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { api } from '../../utils/api';
+import { useAuth } from '../../context/AuthContext';
 import { Flag, CheckCircle, XCircle, ShieldCheck, AlertTriangle, Clock, Eye } from 'lucide-react';
 
 interface FlagItem {
@@ -32,6 +33,7 @@ const FLAG_LABELS: Record<string, string> = {
 };
 
 export default function FlaggedSales() {
+    const { activeStoreId } = useAuth();
     const [sales, setSales] = useState<FlaggedSale[]>([]);
     const [loading, setLoading] = useState(true);
     const [resolving, setResolving] = useState<number | null>(null);
@@ -48,7 +50,7 @@ export default function FlaggedSales() {
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [activeStoreId]);
 
     useEffect(() => {
         fetchFlagged();
